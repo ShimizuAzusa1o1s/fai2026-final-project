@@ -1,9 +1,10 @@
 {
     "players": [
-        ["src.players.TA.random_player", "RandomPlayer"]
+        ["src.players.b12705048.greedy", "Minimizer"],
+        ["src.players.b12705048.greedy", "Maximizer"]
     ],
     "engine": {
-        "n_players": 4,
+        "n_players": 2,
         "n_rounds": 10,
         "verbose": false,
         "timeout": 1.0,

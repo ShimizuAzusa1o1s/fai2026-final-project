@@ -4,4 +4,4 @@ data
 
 # Local Config Files
 .vscode
-.venv
+conda

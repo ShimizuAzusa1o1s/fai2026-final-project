@@ -1,0 +1,21 @@
+{
+    "players": [
+        ["src.players.b12705048.risk-eval", "RiskEvaluation"],
+        ["src.players.b12705048.greedy", "Minimizer"],
+        ["src.players.b12705048.greedy", "Maximizer"],
+        ["src.players.TA.random_player", "RandomPlayer"]
+    ],
+    "engine": {
+        "n_players": 4,
+        "n_rounds": 10,
+        "verbose": false,
+        "timeout": 1.0,
+        "timeout_buffer": 0.5
+    },
+    "tournament": {
+        "type": "random_partition",
+        "duplication_mode": "none",
+        "num_games_per_player": 100,
+        "num_workers": 4
+    }
+}
