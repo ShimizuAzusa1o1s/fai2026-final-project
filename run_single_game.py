@@ -1,4 +1,3 @@
-
 import json
 import copy
 import sys
@@ -7,7 +6,7 @@ import argparse
 import re
 from datetime import datetime
 
-# Ensure src can be imported
+# Ensure ./src can be imported
 sys.path.append(os.getcwd())
 
 from src.engine import Engine
