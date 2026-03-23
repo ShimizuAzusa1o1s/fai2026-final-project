@@ -15,7 +15,7 @@
         "n_rounds": 10,
         "verbose": false,
         "timeout": 1.0,
-        "timeout_buffer": 2.0
+        "timeout_buffer": 5.0
     },
     "tournament": {
         "type": "random_partition",
