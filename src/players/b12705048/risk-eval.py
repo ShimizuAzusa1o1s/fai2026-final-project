@@ -1,8 +1,22 @@
 import math
+import random
 
 class RiskEvaluation():
     def __init__(self, player_idx=0):
         self.player_idx = player_idx
+
+    def calculate_p_saved(self, d_under, N_unseen, n_opponents=3):
+        n = min(n_opponents, N_unseen)
+        if d_under == 0:
+            return 0.0
+        
+        p_zero = 1.0
+        for i in range(n):
+            if N_unseen - i <= 0:
+                break
+            p_zero *= max(0, (N_unseen - d_under - i)) / (N_unseen - i)
+            
+        return 1.0 - p_zero
 
     def get_bullheads(self, card):
         if card == 55: return 7
@@ -10,6 +24,37 @@ class RiskEvaluation():
         if card % 10 == 0: return 3
         if card % 5 == 0: return 2
         return 1
+
+    def select_action_softmax(self, stats_dict, temperature=1.0, top_k=3):
+        # Top-K approach
+        sorted_stats = sorted(stats_dict.items(), key=lambda item: item[1])
+        top_k_stats = dict(sorted_stats[:top_k])
+        
+        cards = list(top_k_stats.keys())
+        costs = list(top_k_stats.values())
+        
+        # 1. Apply negative temperature scaling
+        # We subtract the min cost before exp() for numerical stability 
+        # (prevents math overflow errors if costs are large)
+        min_cost = min(costs)
+        scaled_values = [-(c - min_cost) / temperature for c in costs]
+        
+        # 2. Calculate Exponentials
+        exps = [math.exp(v) for v in scaled_values]
+        sum_exps = sum(exps)
+        
+        # 3. Create Probability Distribution
+        probabilities = [e / sum_exps for e in exps]
+        
+        # 4. Roulette Wheel Selection
+        r = random.random()
+        cumulative = 0.0
+        for card, prob in zip(cards, probabilities):
+            cumulative += prob
+            if r <= cumulative:
+                return card
+                
+        return cards[-1] # Fallback
 
     def action(self, hand, history):
         scores = history.get('scores', [])
@@ -41,8 +86,7 @@ class RiskEvaluation():
                 
         N = 104 - len(seen_cards)
         
-        best_card = None
-        min_cost = float('inf')
+        card_costs = {}
         
         for c in hand:
             target_row = None
@@ -55,7 +99,13 @@ class RiskEvaluation():
                     
             if target_row is None:
                 sorted_rows = sorted(row_stats, key=lambda x: (x['bullheads'], x['length'], x['index']))
-                current_cost = sorted_rows[0]['bullheads']
+                min_bulls = sorted_rows[0]['bullheads']
+                
+                unseen_cards = [u for u in range(1, 105) if u not in seen_cards]
+                d_under = sum(1 for u in unseen_cards if u < c)
+                p_saved = self.calculate_p_saved(d_under, N, opponents)
+                
+                current_cost = (1.0 - p_saved) * min_bulls
             else:
                 L_t = target_row['length']
                 e_t = target_row['end_card']
@@ -82,8 +132,6 @@ class RiskEvaluation():
                                     
                         current_cost = P_break * R_t_bh
                         
-            if current_cost < min_cost:
-                min_cost = current_cost
-                best_card = c
+            card_costs[c] = current_cost
                 
-        return best_card
+        return self.select_action_softmax(card_costs)
