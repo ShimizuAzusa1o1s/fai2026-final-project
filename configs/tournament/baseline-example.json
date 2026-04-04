@@ -22,7 +22,7 @@
         "type": "random_partition",
         "duplication_mode": "cycle",
         "num_games_per_player": 2000,
-        "num_workers": 40,
+        "num_workers": 8,
         "scoring": {
             "baseline_upper_pct": 0.8,
             "baseline_lower_pct": 0.2,

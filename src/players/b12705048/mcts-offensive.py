@@ -117,8 +117,8 @@ class OffensiveMCTS:
         
         # 2. MCTS Loop
         while time.perf_counter() - start_time < self.time_limit:
+            
             # Determinize
-            round_cnt += 1
             random.shuffle(unseen_cards)
             h_size = len(hand)
             opp1 = unseen_cards[0:h_size]

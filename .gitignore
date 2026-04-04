@@ -3,5 +3,5 @@ results
 data
 
 # Local Config Files
-.vscode
+.*
 conda
