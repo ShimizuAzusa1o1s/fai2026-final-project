@@ -3,7 +3,7 @@
         ["src.players.TA.random_player", "RandomPlayer"],
         ["src.players.TA.random_player", "RandomPlayer"],
         ["src.players.TA.random_player", "RandomPlayer"],
-        ["src.players.b12705048.mcts", "MCTS"]
+        ["src.players.b12705048.mcts-v3", "MCTS"]
     ],
     "engine": {
         "n_players": 4,
