@@ -4,17 +4,23 @@ import math
 
 class MCTS():
     """
-    Monte Carlo Tree Search (MCTS) agent for the card game.
-    Uses determinization to guess hidden cards and simulates random playouts 
-    to evaluate the expected penalty of each possible action.
+    Configurable Monte Carlo Tree Search (MCTS) agent.
+    Defaults back to v1 (basic) mode, but accepts kwargs to enable v2 features.
     """
-    def __init__(self, player_idx):
+    def __init__(self, player_idx, **kwargs):
         self.player_idx = player_idx
-        # Time budget per turn to ensure play stays within limits
-        self.time_limit = 0.85 
+        self.time_limit = kwargs.get('time_limit', 0.85)
         self.total_cards = set(range(1, 105))
         self.seen_cards = set()
-        self.prior_weight = 3.0
+
+        # --- Feature Toggles (Default to v1 behavior) ---
+        self.track_seen_cards = kwargs.get('track_seen_cards', False)            # v1: False, v2: True
+        self.determinization = kwargs.get('determinization', 'uniform')          # v1: 'uniform', v2: 'weighted'
+        self.deal_strategy = kwargs.get('deal_strategy', 'chunk')                # v1: 'chunk', v2: 'round_robin'
+        self.prior_weight = kwargs.get('prior_weight', 0.0)                      # v1: 0.0, v2: 3.0
+        self.rollout_policy = kwargs.get('rollout_policy', 'random')             # v1: 'random', v2: 'heuristic'
+        self.low_card_metric = kwargs.get('low_card_metric', 'min_bullheads')    # v1: 'min_bullheads', v2: 'compound'
+        self.use_chaos_surcharge = kwargs.get('use_chaos_surcharge', False)      # v1: False, v2: True
 
     def _get_bullheads(self, card):
         if card == 55: return 7
@@ -84,6 +90,8 @@ class MCTS():
             return 0.0
 
     def _static_risk(self, card, board):
+        if self.prior_weight <= 0.0:
+            return 0.0
         row_stats = self._extract_row_stats(board)
         min_bulls = min(r["bullheads"] for r in row_stats)
         unseen = list(self.total_cards - self.seen_cards)
@@ -93,6 +101,11 @@ class MCTS():
 
     def _rollout_pick(self, hand, board):
         if not hand: return None
+        if self.rollout_policy == 'random':
+            # v1 basic uniform random 
+            return list(hand)[random.randrange(len(hand))]
+
+        # v2 heuristic pick
         row_stats = self._extract_row_stats(board)
         min_bulls = min(r["bullheads"] for r in row_stats)
         unseen = list(self.total_cards - self.seen_cards)
@@ -114,6 +127,8 @@ class MCTS():
         return list(hand)[-1]
 
     def _chaos_surcharge(self, board):
+        if not self.use_chaos_surcharge:
+            return 0.0
         row_stats = self._extract_row_stats(board)
         min_end = min(r["end_card"] for r in row_stats)
         unseen = [u for u in range(1, 105) if u not in self.seen_cards]
@@ -165,19 +180,28 @@ class MCTS():
                 
                 if not valid_rows:
                     best_row_idx = -1
-                    best_cost = (float("inf"), float("inf"), -1)
-                    
-                    for idx, row in enumerate(board):
-                        bullheads = sum(self._get_bullheads(c) for c in row)
-                        length = len(row)
-                        cost = (bullheads, length, idx)
-                        
-                        if cost < best_cost:
-                            best_cost = cost
-                            best_row_idx = idx
+                    if self.low_card_metric == 'compound':
+                        # v2 compound lowest cost metric
+                        best_cost = (float("inf"), float("inf"), -1)
+                        for idx, row in enumerate(board):
+                            bullheads = sum(self._get_bullheads(c) for c in row)
+                            cost = (bullheads, len(row), idx)
+                            if cost < best_cost:
+                                best_cost = cost
+                                best_row_idx = idx
+                        penalty_cost = best_cost[0]
+                    else:
+                        # v1 strict min bullheads metric
+                        min_bullheads = float('inf')
+                        for idx, row in enumerate(board):
+                            row_bullheads = sum(self._get_bullheads(c) for c in row)
+                            if row_bullheads < min_bullheads:
+                                min_bullheads = row_bullheads
+                                best_row_idx = idx
+                        penalty_cost = min_bullheads
                             
                     if owner == "me":
-                        my_penalty += best_cost[0]
+                        my_penalty += penalty_cost
                         
                     board[best_row_idx] = [card]
                 else:
@@ -197,36 +221,54 @@ class MCTS():
         start_time = time.perf_counter()
         board = history.get("board", []) if isinstance(history, dict) else history[-1]
         
-        self.seen_cards.update(hand)
-        for row in board:
-            self.seen_cards.update(row)
-            
-        if isinstance(history, dict):
-            history_matrix = history.get("history_matrix", [])
-            for round_actions in history_matrix:
-                for c in round_actions:
-                    self.seen_cards.add(c)
-            
-        unseen_cards = list(self.total_cards - self.seen_cards)
-        
+        # Determine unseen cards logic based on global tracking
+        if self.track_seen_cards:
+            self.seen_cards.update(hand)
+            for row in board:
+                self.seen_cards.update(row)
+            if isinstance(history, dict):
+                history_matrix = history.get("history_matrix", [])
+                for round_actions in history_matrix:
+                    for c in round_actions:
+                        self.seen_cards.add(c)
+            unseen_cards = list(self.total_cards - self.seen_cards)
+        else:
+            visible_cards = set(hand)
+            for row in board:
+                visible_cards.update(row)
+            unseen_cards = list(self.total_cards - visible_cards)
+            self.seen_cards = set(hand) # local mock for heuristics logic
+
         stats = {
             c: {
                 "penalty": self._static_risk(c, board) * self.prior_weight,
-                "visits": self.prior_weight
+                "visits": max(self.prior_weight, 0)
             }
             for c in hand
         }
         hand_size = len(hand)
         
         while time.perf_counter() - start_time < self.time_limit:
-            weights = self._get_card_weights(unseen_cards, board)
-            determinized = self._weighted_sample_without_replacement(unseen_cards, weights, len(unseen_cards))
+            # 1. Determinization
+            if self.determinization == 'weighted':
+                weights = self._get_card_weights(unseen_cards, board)
+                determinized_pool = self._weighted_sample_without_replacement(unseen_cards, weights, len(unseen_cards))
+            else:
+                determinized_pool = unseen_cards[:]
+                random.shuffle(determinized_pool)
             
+            # 2. Deal strategy
             h = hand_size
             opp_hands = [[], [], []]
-            for i, card in enumerate(determinized[:3*h]):
-                opp_hands[i % 3].append(card)
+            if self.deal_strategy == 'round_robin':
+                for i, card in enumerate(determinized_pool[:3*h]):
+                    opp_hands[i % 3].append(card)
+            else: # 'chunk' (v1 style)
+                opp_hands[0] = determinized_pool[0:h]
+                opp_hands[1] = determinized_pool[h:2*h]
+                opp_hands[2] = determinized_pool[2*h:3*h]
             
+            # 3. MCTS Simulation
             for c in hand:
                 board_copy = [row[:] for row in board]
                 remaining_hand = [card for card in hand if card != c]

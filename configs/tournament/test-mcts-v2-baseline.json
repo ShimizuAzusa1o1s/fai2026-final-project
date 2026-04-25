@@ -1,0 +1,33 @@
+{
+    "baselines": [
+        ["src.players.TA.random_player", "RandomPlayer", {}, "P-Rand"]
+    ],
+    "players": [
+        [
+            "src.players.b12705048.mcts-v2", 
+            "MCTS", 
+            {
+                "track_seen_cards": false, 
+                "determinization": "uniform", 
+                "deal_strategy": "chunk", 
+                "prior_weight": 0.0, 
+                "rollout_policy": "random", 
+                "low_card_metric": "min_bullheads", 
+                "use_chaos_surcharge": false
+            }, 
+            "MCTS-Baseline-V1"
+        ]
+    ],
+    "engine": {
+        "n_players": 4,
+        "n_rounds": 10,
+        "verbose": false,
+        "timeout": 1.0,
+        "timeout_buffer": 0.5
+    },
+    "tournament": {
+        "type": "random_partition",
+        "num_games_per_player": 500,
+        "num_workers": 40
+    }
+}
