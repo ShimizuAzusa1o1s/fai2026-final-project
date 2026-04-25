@@ -103,12 +103,21 @@ class MCTS():
         visible_cards = set()
         for row in board:
             visible_cards.update(row)
+            
+        if isinstance(history, dict):
+            # Include all cards played in previous rounds
+            for past_round in history.get('history_matrix', []):
+                visible_cards.update(past_round)
+            # Include initial board cards in case they were already taken
+            if history.get('board_history'):
+                for row in history['board_history'][0]:
+                    visible_cards.update(row)
         
         # U = {1...104} \ (Visible Cards U Hand)
         unseen_cards = list(self.total_cards - visible_cards - set(hand))
         
         # Step 3: The MCTS Loop
-        stats = {c: {"penalty": 0, "visits": 0} for c in hand}
+        stats = {c: {"penalty": 0.0, "visits": 0} for c in hand}
         hand_size = len(hand)
         
         # Leaving 100ms safety buffer
