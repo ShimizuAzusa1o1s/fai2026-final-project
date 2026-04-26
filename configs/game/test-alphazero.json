@@ -1,0 +1,16 @@
+{
+    "players": [
+        ["src.players.TA.random_player", "RandomPlayer"],
+        ["src.players.TA.random_player", "RandomPlayer"],
+        ["src.players.TA.random_player", "RandomPlayer"],
+        ["src.players.b12705048.alphazero", "AlphaZeroPlayer", {"model_path": "models/alphazero_latest.pt"}]
+    ],
+    "engine": {
+        "n_players": 4,
+        "n_rounds": 10,
+        "verbose": true,
+        "timeout": 1.0,
+        "timeout_buffer": 0.5
+    },
+    "num_games": 1
+}

@@ -1,0 +1,23 @@
+{
+    "baselines": [
+        ["src.players.TA.random_player", "RandomPlayer", {}, "B1"],
+        ["src.players.b12705048.mcts-primal", "MCTS", {}, "B2"],
+        ["src.players.b12705048.greedy", "Minimizer", {}, "B3"]
+    ],
+    "players": [
+        ["src.players.b12705048.alphazero", "AlphaZeroPlayer", {"model_path": "models/alphazero_latest.pt"}]
+    ],
+    "engine": {
+        "n_players": 4,
+        "n_rounds": 10,
+        "verbose": false,
+        "timeout": 1.0,
+        "timeout_buffer": 0.5
+    },
+    "tournament": {
+        "type": "random_partition",
+        "duplication_mode": "cycle",
+        "num_games_per_player": 200,
+        "num_workers": 24
+    }
+}
