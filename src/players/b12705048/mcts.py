@@ -27,7 +27,7 @@ class Node:
 
     def update_recursive(self, leaf_value):
         if self.parent:
-            self.parent.update_recursive(-leaf_value)
+            self.parent.update_recursive(leaf_value)
         self.update(leaf_value)
 
     def is_leaf(self):
@@ -82,7 +82,7 @@ class MCTS_PUCT:
             diff = opp_scores - my_score
             leaf_value = max(-1.0, min(1.0, diff / 50.0))
             
-            node.update_recursive(-leaf_value)
+            node.update_recursive(leaf_value)
             return
             
         # Leaf evaluation
@@ -99,7 +99,7 @@ class MCTS_PUCT:
             filtered_probs = {act: prob for act in legal_actions}
             
         node.expand(filtered_probs)
-        node.update_recursive(-leaf_value)
+        node.update_recursive(leaf_value)
 
     def get_action(self, state, env, state_encoder, player_idx, temperature=1e-3):
         root = Node(None, 1.0, None)

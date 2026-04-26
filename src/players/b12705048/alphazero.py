@@ -9,16 +9,21 @@ from .state_encoding import Encoding, get_state_dim, N_CARDS
 from .model import TinyAlphaZeroNet
 
 class AlphaZeroPlayer:
-    def __init__(self, player_idx, model_path=None, n_playouts=50, time_limit=0.9):
+    def __init__(self, player_idx, model_path=None, n_playouts=50, time_limit=0.9, device=None):
         self.player_idx = player_idx
         self.n_playouts = n_playouts
         self.time_limit = time_limit
         self.state_dim = get_state_dim()
-        
-        self.model = TinyAlphaZeroNet(self.state_dim, N_CARDS)
+        if device is None:
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        else:
+            self.device = device
+            
+        self.model = TinyAlphaZeroNet(self.state_dim, N_CARDS).to(self.device)
+        self.model.device = self.device # type: ignore
         
         if model_path and os.path.exists(model_path):
-            self.model.load_state_dict(torch.load(model_path, map_location='cpu'))
+            self.model.load_state_dict(torch.load(model_path, map_location=self.device))
         self.model.eval()
         
         self.total_cards = set(range(1, 105))

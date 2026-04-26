@@ -36,15 +36,16 @@ class TinyAlphaZeroNet(nn.Module):
         return policy_probs, value
 
     def predict(self, state, mask):
+        device = getattr(self, 'device', torch.device('cpu'))
         # Convert to single-batch tensor
-        state_t = torch.FloatTensor(state).unsqueeze(0)
-        mask_t = torch.FloatTensor(mask).unsqueeze(0)
+        state_t = torch.FloatTensor(state).unsqueeze(0).to(device)
+        mask_t = torch.FloatTensor(mask).unsqueeze(0).to(device)
         
         with torch.no_grad():
             p, v = self(state_t, mask_t)
             
-        p = p.squeeze(0).numpy()
-        v = v.squeeze(0).item()
+        p = p.cpu().squeeze(0).numpy()
+        v = v.cpu().squeeze(0).item()
         
         # Ensure mask is exactly 0
         p = p * mask

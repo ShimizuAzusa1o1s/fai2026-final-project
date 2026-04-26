@@ -20,7 +20,7 @@ def self_play_episode(model_path=None, num_games=10, timeout=1.0):
     state_dim = get_state_dim()
     n_actions = N_CARDS
     
-    players = [AlphaZeroPlayer(i, model_path, n_playouts=10, time_limit=timeout) for i in range(4)]
+    players = [AlphaZeroPlayer(i, model_path, n_playouts=500, time_limit=timeout) for i in range(4)]
     
     engine_config = {
         "n_players": 4,
@@ -57,6 +57,7 @@ def self_play_episode(model_path=None, num_games=10, timeout=1.0):
             # Step 1: Collect actions and save states
             round_data = [] # Stores (state_vec, mask, target_probs, player_idx)
             
+            # FIRST PASS: Collect all actions purely without mutating state
             for p_idx, player in enumerate(engine.players):
                 hand = engine.hands[p_idx].copy()
                 
@@ -66,11 +67,13 @@ def self_play_episode(model_path=None, num_games=10, timeout=1.0):
                 state_vec, mask = Encoding.encode_state(history_state, hand, p_idx)
                 round_data.append((state_vec, mask, target_probs, p_idx))
                 
-                # Apply action to engine format
-                played_card = best_action
-                engine.hands[p_idx].remove(played_card)
-                current_played_cards.append((played_card, p_idx))
-                round_actions[p_idx] = played_card
+                # Store intended action
+                round_actions[p_idx] = best_action
+                current_played_cards.append((best_action, p_idx))
+                
+            # SECOND PASS: Apply all mutations AFTER all actions are collected
+            for card, p_idx in current_played_cards:
+                engine.hands[p_idx].remove(card)
                 
             engine.history_matrix.append(round_actions)
             engine.flags_matrix.append(round_flags)
@@ -83,10 +86,6 @@ def self_play_episode(model_path=None, num_games=10, timeout=1.0):
             engine.round += 1
             game_data.extend(round_data)
             
-            
-            # Append this round's data to a game-specific list, not across the whole function!
-            # We already have `round_data` from above. We need a `game_data` list.
-        
         # After all rounds:
         final_scores = engine.scores
         for i in range(len(game_data)):
@@ -103,7 +102,7 @@ def self_play_episode(model_path=None, num_games=10, timeout=1.0):
             
     return data
 
-def generate_parallel(num_games=100, n_jobs=4, model_path=None):
+def generate_parallel(num_games=10, n_jobs=4, model_path=None):
     if n_jobs == 1:
         # debugging mode
         return self_play_episode(model_path, num_games)
@@ -115,7 +114,8 @@ def generate_parallel(num_games=100, n_jobs=4, model_path=None):
     
     all_data = []
     for res in results:
-        all_data.extend(res)
+        if res is not None:
+            all_data.extend(res)
         
     return all_data
 
