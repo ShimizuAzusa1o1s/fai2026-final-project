@@ -5,7 +5,7 @@ set -e
 
 # --- Configuration ---
 MAX_ITERATIONS=50
-GAMES_PER_ITER=100
+GAMES_PER_ITER=50
 EPOCHS_PER_ITER=5
 PYTHON_CMD="python" # Change to python3 if required by your environment
 

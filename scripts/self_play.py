@@ -124,7 +124,7 @@ if __name__ == "__main__":
     os.makedirs("data", exist_ok=True)
     
     print("Generating self-play data...")
-    data = generate_parallel(num_games=100, n_jobs=10, model_path=None)
+    data = generate_parallel(num_games=50, n_jobs=10, model_path=None)
     print(f"Generated {len(data)} training examples.")
     
     torch.save(data, "data/self_play_data.pt")
