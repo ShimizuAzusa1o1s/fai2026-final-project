@@ -7,7 +7,7 @@
         ["src.players.TA.public_baselines1", "Baseline5", {}, "B5"]
     ],
     "players": [
-        ["src.players.b12705048.mcts-v3", "MCTS"],
+        ["src.players.b12705048.mcts-primal", "MCTS"],
         ["src.players.b12705048.greedy", "Minimizer"],
         ["src.players.b12705048.greedy", "Maximizer"]
     ],
