@@ -29,7 +29,7 @@ class SelfPlayDataset(Dataset):
             torch.FloatTensor([self.values[idx]])
         )
 
-def train_model(model_path=None, data_path="data/self_play_data.pt", save_path="models/latest.pt", epochs=5, batch_size=256, lr=1e-3):
+def train_model(model_path=None, data_path="data/self_play_data.pt", save_path="models/latest.pt", epochs=5, batch_size=256, lr=1e-4):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Training on device: {device}")
     

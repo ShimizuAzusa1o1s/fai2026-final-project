@@ -20,7 +20,7 @@ def self_play_episode(model_path=None, num_games=10, timeout=1.0):
     state_dim = get_state_dim()
     n_actions = N_CARDS
     
-    players = [AlphaZeroPlayer(i, model_path, n_playouts=500, time_limit=timeout) for i in range(4)]
+    players = [AlphaZeroPlayer(i, model_path, n_playouts=200, time_limit=timeout) for i in range(4)]
     
     engine_config = {
         "n_players": 4,
@@ -124,7 +124,7 @@ if __name__ == "__main__":
     os.makedirs("data", exist_ok=True)
     
     print("Generating self-play data...")
-    data = generate_parallel(num_games=50, n_jobs=10, model_path=None)
+    data = generate_parallel(num_games=250, n_jobs=10, model_path=None)
     print(f"Generated {len(data)} training examples.")
     
     torch.save(data, "data/self_play_data.pt")
