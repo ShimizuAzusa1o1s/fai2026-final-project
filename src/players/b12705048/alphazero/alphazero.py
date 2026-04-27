@@ -20,7 +20,7 @@ class AlphaZeroPlayer:
             self.device = device
             
         self.model = TinyAlphaZeroNet(self.state_dim, N_CARDS).to(self.device)
-        self.model.device = self.device # type: ignore
+        self.model.device = self.device
         
         if model_path and os.path.exists(model_path):
             self.model.load_state_dict(torch.load(model_path, map_location=self.device))

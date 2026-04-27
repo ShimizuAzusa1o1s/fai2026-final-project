@@ -8,8 +8,8 @@ import numpy as np
 import sys
 sys.path.append(os.getcwd())
 
-from src.players.b12705048.model import TinyAlphaZeroNet
-from src.players.b12705048.state_encoding import get_state_dim, N_CARDS
+from src.players.b12705048.alphazero.model import TinyAlphaZeroNet
+from src.players.b12705048.alphazero.state_encoding import get_state_dim, N_CARDS
 
 class SelfPlayDataset(Dataset):
     def __init__(self, data):

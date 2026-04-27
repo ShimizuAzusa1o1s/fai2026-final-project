@@ -10,8 +10,8 @@ from joblib import Parallel, delayed
 sys.path.append(os.getcwd())
 
 from src.engine import Engine
-from src.players.b12705048.alphazero import AlphaZeroPlayer
-from src.players.b12705048.state_encoding import Encoding, get_state_dim, N_CARDS
+from src.players.b12705048.alphazero.alphazero import AlphaZeroPlayer
+from src.players.b12705048.alphazero.state_encoding import Encoding, get_state_dim, N_CARDS
 
 def self_play_episode(model_path=None, num_games=10, timeout=1.0):
     """
