@@ -1,0 +1,12 @@
+{
+    "server_host": "ws6.csie.org",
+    "server_port": 8888,
+    "username": "Azusa",
+    "password": "LaoWang1015@@",
+    "label": "Azusa_MCTSPrimal",
+    "player": {
+        "path": "src.players.b12705048.mcts_primal",
+        "class": "MCTS",
+        "args": {}
+    }
+}

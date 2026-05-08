@@ -7,8 +7,7 @@
         ["src.players.TA.public_baselines1", "Baseline5", {}, "B5"]
     ],
     "players": [
-        ["src.players.b12705048.mcts_policy", "MCTSHumanPolicy", {}, "MCTSHP"],
-        ["src.players.b12705048.mcts_primal", "MCTS", {}, "MCTSP"]
+        ["src.players.b12705048.mcts_primal", "MCTS", {}, "MCTS"]
     ],
     "engine": {
         "n_players": 4,
@@ -21,7 +20,7 @@
         "type": "random_partition",
         "duplication_mode": "cycle",
         "num_games_per_player": 100,
-        "num_workers": 10,
+        "num_workers": 4,
         "scoring": {
             "baseline_upper_pct": 0.8,
             "baseline_lower_pct": 0.2,
