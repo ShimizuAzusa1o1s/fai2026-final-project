@@ -411,10 +411,12 @@ class MCTS_PUCT:
         root.expand(filtered_probs)
 
         # Run playouts within time/playout budget
-        start_time = time.time()
+        # Use perf_counter for consistent, high-precision timing
+        start_time = time.perf_counter()
         for i in range(self.n_playout):
-            # Check time limit
-            if time.time() - start_time > self.time_limit:
+            # Check time limit: leave 5ms buffer to ensure we return before timeout
+            elapsed = time.perf_counter() - start_time
+            if elapsed > self.time_limit - 0.005:
                 break
                 
             # Execute one MCTS playout with fresh determinization

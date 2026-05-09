@@ -151,7 +151,7 @@ class AlphaZeroPlayer:
         """
         pass
 
-    def get_action_probs(self, state_history, current_hand, temperature=1e-3, use_mcts=True):
+    def get_action_probs(self, state_history, current_hand, temperature=1e-3, use_mcts=True, time_limit=None):
         """
         Get action probabilities using MCTS or network policy.
         
@@ -163,6 +163,7 @@ class AlphaZeroPlayer:
             current_hand (list): Cards in current player's hand
             temperature (float): Exploration temperature (1e-3 for greedy, 1.0 for exploration)
             use_mcts (bool): Whether to use MCTS (True) or just network policy (False)
+            time_limit (float): Maximum time for MCTS search in seconds (uses self.time_limit if None)
         
         Returns:
             tuple: (best_action, action_probabilities)
@@ -172,6 +173,9 @@ class AlphaZeroPlayer:
         if use_mcts and self.n_playouts > 0:
             # Use MCTS-guided action selection with fresh determinization per playout
             from .mcts import MCTS_PUCT
+            
+            # Use provided time limit, or fall back to default
+            actual_time_limit = time_limit if time_limit is not None else self.time_limit
             
             # Build game state representation for MCTS
             board = state_history.get('board', [])
@@ -193,7 +197,7 @@ class AlphaZeroPlayer:
                 policy_value_fn=self.model.predict,
                 c_puct=1.5,  # Exploration constant
                 n_playout=self.n_playouts,
-                time_limit=self.time_limit
+                time_limit=actual_time_limit
             )
             best_a, target_probs = mcts.get_action(
                 fast_state, current_hand, mcts_encoder, self.player_idx, temperature=temperature
@@ -232,15 +236,18 @@ class AlphaZeroPlayer:
         """
         start_time = time.perf_counter()
         
-        # Compute remaining time budget for this move
-        time_left = self.time_limit - (time.perf_counter() - start_time)
+        # SAFETY MARGIN: Reserve 0.05s for overhead (network inference, action selection)
+        # This prevents timeout issues when MCTS uses exactly the time_limit
+        safety_margin = 0.05
+        time_for_mcts = max(0.01, self.time_limit - safety_margin)  # At least 10ms for MCTS
         
         # Get action using MCTS with temperature=0.0 (greedy in tournament play)
+        # Pass the remaining time to MCTS
         best_action, target_probs = self.get_action_probs(
-            history, hand, temperature=0.0, use_mcts=True
+            history, hand, temperature=0.0, use_mcts=True, time_limit=time_for_mcts
         )
         
         elapsed = time.perf_counter() - start_time
-        # print(f"AlphaZero Player {self.player_idx} acted in {elapsed:.3f}s - chose {best_action}")
+        # print(f"AlphaZero Player {self.player_idx} acted in {elapsed:.3f}s (limit: {self.time_limit}s) - chose {best_action}")
         
         return best_action
