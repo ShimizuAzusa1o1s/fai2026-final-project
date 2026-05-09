@@ -42,7 +42,7 @@ class MCTS():
             player_idx (int): The player's index in the game (0-3)
         """
         self.player_idx = player_idx
-        self.time_limit = 0.90  # seconds available per decision
+        self.time_limit = 0.9  # seconds available per decision
         self.total_cards = set(range(1, 105))  # All possible card values in the deck
 
     def _get_bullheads(self, card):
