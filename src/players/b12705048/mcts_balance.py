@@ -1,17 +1,18 @@
 """
-MCTS with Depth-Configurable Primal (No Policy) Evaluation Module
+MCTS with Phase-Based Evaluation (Hand Quality vs. Penalty)
 
-This module implements a depth-configurable Monte Carlo Tree Search (MCTS) player
-that evaluates each possible card move by simulating random rollouts for a
-configurable number of turns ahead. The player uses a simpler scoring approach that
-only tracks its own penalty (not opponent penalties), making it computationally lighter.
+This module implements a Monte Carlo Tree Search (MCTS) player that mitigates the
+"horizon effect" and early-game noise by blending deterministic hand quality
+evaluation with penalty minimization. The weighting dynamically shifts as the game
+progresses, anchoring the early game with hand structure heuristics while relying
+on full penalty simulations in the late game.
 
 Key Features:
-- Configurable lookahead depth (3/5/7 rounds or custom)
+- Phase-based evaluation: Hand Quality (early) → Penalty (late)
+- Hand quality heuristic penalizing tight clusters and poor spacing
+- Dynamic weighting alpha = current_turn / 9.0 (linear progression)
 - Determinized opponent hands (random sampling from unseen cards)
-- Multiple simulation rollouts to estimate card quality
-- Simple penalty minimization (only own penalty, no opponent consideration)
-- Pure exploration without policy guidance
+- Multiple simulation rollouts combining heuristic and simulation signals
 - 0.90 second time limit per decision for competitive play
 """
 
@@ -22,28 +23,31 @@ import random
 
 class MCTS():
     """
-    Depth-Configurable Monte Carlo Tree Search player with simple penalty minimization.
+    Monte Carlo Tree Search player with phase-based hand quality and penalty blending.
     
-    This player uses simulation-based decision making to evaluate all available cards
-    in its hand. For each candidate card, it runs multiple simulations where:
-    1. The candidate card is played deterministically
-    2. Remaining hand cards are played randomly (up to the configured depth)
-    3. Opponent cards are sampled randomly from unseen cards
-    4. Game rules are applied to calculate resulting penalties
+    This player addresses the "horizon effect" in imperfect information games by
+    combining two evaluation signals:
+    1. Hand Quality Heuristic: Evaluates hand structure (clustering, row access)
+    2. Penalty Simulation: Runs full game rollouts to estimate penalty outcomes
     
-    The lookahead depth can be configured per instance (default: 5 turns), allowing
-    trade-offs between computation time and lookahead quality. The final card selection
-    chooses the move with the lowest expected penalty (no consideration of opponent moves,
-    pure self-interested strategy).
+    For each candidate card, the algorithm:
+    1. Calculates hand quality (deterministic, fast)
+    2. Runs simulations estimating penalty (stochastic, accurate late-game)
+    3. Blends both signals with dynamic weight alpha = turn / 9.0
+    4. Selects the card with the best blended score
+    
+    Early game (alpha ≈ 0.0): Prioritize hand structure and good spacing
+    Late game (alpha ≈ 1.0): Prioritize penalty minimization through simulation
     """
     
     def __init__(self, player_idx, depth=7):
         """
-        Initialize the MCTS player.
+        Initialize the MCTS player with phase-based evaluation.
         
         Args:
             player_idx (int): The player's index in the game (0-3)
             depth (int): The number of rounds (turns) to simulate forward.
+                         Default 10 simulates the entire remaining game.
         """
         self.player_idx = player_idx
         self.depth = depth
@@ -111,7 +115,7 @@ class MCTS():
         current_opp_hands = [list(h) for h in opp_hands]
         
         # Turn Loop: continue until all hands are empty or depth is reached
-        turns_left = min(len(current_my_hand) + 1, self.depth)
+        turns_left = min(len(current_my_hand) + 1, self.depth) 
         
         for turn in range(turns_left):
             # Step 1: Gather all cards to be played this turn
@@ -175,21 +179,45 @@ class MCTS():
                         
         return my_penalty
 
+    def _evaluate_hand(self, hand, board):
+        if not hand:
+            return 0.0
+        
+        score = 0.0
+        # Penalize tight clusters (cards too close to each other)
+        sorted_hand = sorted(hand)
+        for i in range(len(sorted_hand) - 1):
+            diff = sorted_hand[i+1] - sorted_hand[i]
+            if diff <= 3:
+                score += 10.0 / max(1, diff)
+
+        # Calculate minimum distance to row ends
+        for card in hand:
+            min_dist = 105
+            for row in board:
+                if card > row[-1]:
+                    min_dist = min(min_dist, card - row[-1])
+            if min_dist == 105:
+                score += 20.0 # arbitrary penalty for low cards
+            else:
+                score += min_dist / 10.0
+                
+        return score
+
     def action(self, hand, history):
         """
-        Select the best card to play using depth-configurable MCTS with penalty minimization.
+        Select the best card using phase-based evaluation with depth-limited lookahead.
         
         Algorithm Overview:
         1. Parse current game state (board, unseen cards)
-        2. Run repeated simulations until time limit:
+        2. Calculate phase weight alpha based on game progression
+        3. Run repeated simulations until time limit:
            - Determinize opponent hands (random sample from unseen cards)
-           - Evaluate each card option by simulating self.depth turns ahead
-           - Track penalty statistics for each card
-        3. Score each card by its average penalty (lower is better)
-        4. Return card with lowest average penalty
-        
-        The depth parameter (default: 5) controls how many turns to simulate forward,
-        allowing tuning between computational cost and lookahead quality.
+           - Evaluate each card's hand quality (deterministic)
+           - Simulate the round up to configured depth and evaluate penalty
+           - Blend: blended_score = alpha * penalty + (1 - alpha) * hand_quality
+           - Accumulate blended score statistics
+        4. Return card with lowest average blended score
         
         Args:
             hand (list): Cards available to play
@@ -224,8 +252,10 @@ class MCTS():
         unseen_cards = list(self.total_cards - visible_cards - set(hand))
         
         # Step 3: The MCTS Loop - Run simulations until time limit
-        stats = {c: {"penalty": 0.0, "visits": 0} for c in hand}
+        stats = {c: {"score": 0.0, "visits": 0} for c in hand}
         hand_size = len(hand)
+        current_turn = 10 - hand_size
+        alpha = current_turn / 9.0
         
         # Run simulations with 100ms safety buffer
         while time.perf_counter() - start_time < self.time_limit:
@@ -253,12 +283,15 @@ class MCTS():
                 # Simulate the complete round with this card choice
                 penalty = self._simulate_round(c, remaining_hand, opp_copy, board_copy)
                 
+                hand_eval = self._evaluate_hand(remaining_hand, board_copy)
+                blended_score = (alpha * penalty) + ((1.0 - alpha) * hand_eval)
+                
                 # Accumulate statistics for this card
-                stats[c]["penalty"] += penalty
+                stats[c]["score"] += blended_score
                 stats[c]["visits"] += 1
                 
         # Step 4: Action Selection
         # Calculate average penalty and select the minimum
-        best_card = min(stats.keys(), key=lambda k: stats[k]["penalty"] / max(1, stats[k]["visits"]))
+        best_card = min(stats.keys(), key=lambda k: stats[k]["score"] / max(1, stats[k]["visits"]))
         
         return best_card

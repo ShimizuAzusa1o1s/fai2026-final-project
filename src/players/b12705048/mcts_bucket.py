@@ -1,17 +1,19 @@
 """
-MCTS with Depth-Configurable Primal (No Policy) Evaluation Module
+MCTS with Stratified Sampling (Card Bucketing)
 
-This module implements a depth-configurable Monte Carlo Tree Search (MCTS) player
-that evaluates each possible card move by simulating random rollouts for a
-configurable number of turns ahead. The player uses a simpler scoring approach that
-only tracks its own penalty (not opponent penalties), making it computationally lighter.
+This module implements a Monte Carlo Tree Search (MCTS) player that reduces
+simulation variance through stratified sampling of opponent hands. Instead of
+random shuffling (which can create unrealistic opponent hand distributions),
+this variant bucketsthe unseen cards into quartiles before distributing them
+evenly among opponents. This ensures each determinization is statistically
+representative of realistic card distributions.
 
 Key Features:
-- Configurable lookahead depth (3/5/7 rounds or custom)
-- Determinized opponent hands (random sampling from unseen cards)
-- Multiple simulation rollouts to estimate card quality
+- Stratified sampling: Bucketing unseen cards into quartiles
+- Even distribution of buckets across 3 opponents
+- Reduced simulation variance for faster convergence
+- Multiple simulation rollouts with representative opponent hands
 - Simple penalty minimization (only own penalty, no opponent consideration)
-- Pure exploration without policy guidance
 - 0.90 second time limit per decision for competitive play
 """
 
@@ -22,31 +24,32 @@ import random
 
 class MCTS():
     """
-    Depth-Configurable Monte Carlo Tree Search player with simple penalty minimization.
+    Monte Carlo Tree Search player with stratified opponent hand sampling.
     
-    This player uses simulation-based decision making to evaluate all available cards
-    in its hand. For each candidate card, it runs multiple simulations where:
-    1. The candidate card is played deterministically
-    2. Remaining hand cards are played randomly (up to the configured depth)
-    3. Opponent cards are sampled randomly from unseen cards
-    4. Game rules are applied to calculate resulting penalties
+    This player addresses simulation variance by using stratified sampling instead
+    of simple random shuffling when determinizing opponent hands. The key insight:
+    opponent card distributions should be representative of realistic dealing,
+    not arbitrary random permutations.
     
-    The lookahead depth can be configured per instance (default: 5 turns), allowing
-    trade-offs between computation time and lookahead quality. The final card selection
-    chooses the move with the lowest expected penalty (no consideration of opponent moves,
-    pure self-interested strategy).
+    For each candidate card, the algorithm:
+    1. Buckets unseen cards into 4 quartiles (low, low-mid, high-mid, high)
+    2. Shuffles within each bucket independently
+    3. Distributes bucket cards evenly among 3 opponents (round-robin per bucket)
+    4. Runs simulation and evaluates resulting penalty
+    5. Selects the card with lowest expected penalty
+    
+    This stratification ensures opponent hands have realistic card distributions,
+    reducing variance and enabling faster convergence to true expected values.
     """
     
-    def __init__(self, player_idx, depth=7):
+    def __init__(self, player_idx):
         """
         Initialize the MCTS player.
         
         Args:
             player_idx (int): The player's index in the game (0-3)
-            depth (int): The number of rounds (turns) to simulate forward.
         """
         self.player_idx = player_idx
-        self.depth = depth
         self.time_limit = 0.90  # seconds available per decision
         self.total_cards = set(range(1, 105))  # All possible card values in the deck
 
@@ -80,15 +83,13 @@ class MCTS():
 
     def _simulate_round(self, my_card, my_hand, opp_hands, board):
         """
-        Simulate a round up to the configured depth starting with a chosen card.
+        Simulate a complete round (all remaining turns) starting with a chosen card.
         
-        This function implements the game rules to play out cards for a number of turns
-        determined by the depth parameter:
+        This function implements the game rules to play out all remaining cards:
         1. Place my_card first
         2. Then alternate randomly playing remaining my_hand and opponent cards
         3. Track penalty for the player only
         4. Modify board state in place as cards are played
-        5. Stop after self.depth turns have been simulated
         
         Game Rules Applied:
         - Card must be strictly greater than row's last card to play normally
@@ -102,7 +103,7 @@ class MCTS():
             board (list): Current board state with 4 rows (modified in place)
             
         Returns:
-            int: my_penalty - accumulated bullheads for this simulation (up to depth turns)
+            int: my_penalty - accumulated bullheads for this simulation
         """
         my_penalty = 0
         
@@ -110,8 +111,8 @@ class MCTS():
         current_my_hand = list(my_hand)
         current_opp_hands = [list(h) for h in opp_hands]
         
-        # Turn Loop: continue until all hands are empty or depth is reached
-        turns_left = min(len(current_my_hand) + 1, self.depth)
+        # Turn Loop: continue until all hands are empty (including evaluated card)
+        turns_left = len(current_my_hand) + 1 
         
         for turn in range(turns_left):
             # Step 1: Gather all cards to be played this turn
@@ -177,19 +178,18 @@ class MCTS():
 
     def action(self, hand, history):
         """
-        Select the best card to play using depth-configurable MCTS with penalty minimization.
+        Select the best card using stratified sampling for opponent hands.
         
         Algorithm Overview:
         1. Parse current game state (board, unseen cards)
         2. Run repeated simulations until time limit:
-           - Determinize opponent hands (random sample from unseen cards)
-           - Evaluate each card option by simulating self.depth turns ahead
-           - Track penalty statistics for each card
+           - Bucket unseen cards into 4 quartiles (sorted, then divided)
+           - Shuffle within each bucket independently
+           - Distribute bucket cards round-robin to 3 opponents
+           - Evaluate each card option by simulating the round
+           - Track penalty statistics with stratified opponent hands
         3. Score each card by its average penalty (lower is better)
         4. Return card with lowest average penalty
-        
-        The depth parameter (default: 5) controls how many turns to simulate forward,
-        allowing tuning between computational cost and lookahead quality.
         
         Args:
             hand (list): Cards available to play
@@ -229,15 +229,25 @@ class MCTS():
         
         # Run simulations with 100ms safety buffer
         while time.perf_counter() - start_time < self.time_limit:
-            # Determinization: Create random opponent hands from unseen cards
-            random.shuffle(unseen_cards)
-            h = hand_size
+            # Stratified Sampling: Create representative opponent hands via bucketing
+            # Sort cards once, then bucket into quartiles to preserve distribution
+            unseen_cards.sort()
+            determinized_opp_hands = [[], [], []]
+            num_buckets = 4  # Quartiles: low, low-mid, high-mid, high
+            chunk_size = len(unseen_cards) // num_buckets
             
-            # Distribute unseen cards evenly among 3 opponents
-            opp1 = unseen_cards[0:h]
-            opp2 = unseen_cards[h:2*h]
-            opp3 = unseen_cards[2*h:3*h]
-            determinized_opp_hands = [opp1, opp2, opp3]
+            for b in range(num_buckets):
+                # Slice the bucket to maintain sorted distribution
+                start_idx = b * chunk_size
+                end_idx = (b + 1) * chunk_size if b < num_buckets - 1 else len(unseen_cards)
+                bucket_cards = unseen_cards[start_idx:end_idx]
+                
+                # Shuffle within bucket to randomize while preserving distribution tier
+                random.shuffle(bucket_cards)
+                
+                # Round-robin distribution: ensures each opponent gets cards from all tiers
+                for i, card in enumerate(bucket_cards):
+                    determinized_opp_hands[i % 3].append(card)
             
             # Evaluate each card option
             for c in hand:
