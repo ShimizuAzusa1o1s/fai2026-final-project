@@ -11,11 +11,13 @@ The encoder creates a single feature vector from:
   - Game history (cards played in previous rounds)
   - Score information (cumulative penalties)
   - Round number (game progress)
+  - Bullhead counts per row (penalty features)
 
 All features are normalized to reasonable ranges for neural network input.
 """
 
 import numpy as np
+from .fast_env import get_bullheads
 
 # Game constants for 6 Nimmt!
 N_CARDS = 104      # Total number of unique cards
@@ -23,7 +25,8 @@ N_ROWS = 4         # Number of rows on the board
 MAX_ROW_LEN = 5    # Maximum cards per row before forced placement
 N_PLAYERS = 4      # Number of players
 # Note: STATE_DIM is computed at module init, see get_state_dim()
-STATE_DIM = N_CARDS * 3 + N_ROWS * MAX_ROW_LEN + N_PLAYERS * 1 + 1
+# Added 4 features for cumulative bullheads per row
+STATE_DIM = N_CARDS * 3 + N_ROWS * MAX_ROW_LEN + N_PLAYERS * 1 + 1 + N_ROWS
 
 
 class Encoding:
@@ -39,15 +42,16 @@ class Encoding:
         """
         Encode a complete game state into a fixed-length feature vector.
         
-        Creates a single 233-dimensional vector representation of the game state
+        Creates a single 237-dimensional vector representation of the game state
         from the perspective of a given player. Also returns a legal action mask.
         
-        Feature breakdown (233 total):
+        Feature breakdown (237 total):
           - Board features (20): 4 rows x 5 max positions, values normalized [0,1]
           - Hand features (104): One-hot encoding of cards in hand
           - Visible cards (104): One-hot of all cards ever seen or on board
           - Score features (4): Normalized cumulative scores for all players
           - Round feature (1): Current round normalized to [0,1]
+          - Bullhead features (4): Cumulative bullhead points per row normalized [0,1]
         
         Args:
             history (dict): Game state containing:
@@ -61,7 +65,7 @@ class Encoding:
         
         Returns:
             tuple: (state_vec, mask)
-                   state_vec: 233-d numpy float32 vector for network input
+                   state_vec: 237-d numpy float32 vector for network input
                    mask: 104-d binary vector, 1.0 for cards in hand (legal moves)
         """
         # BOARD REPRESENTATION (20 features)
@@ -125,14 +129,23 @@ class Encoding:
         round_idx = history.get('round', 0)
         round_vec = np.array([round_idx / 10.0], dtype=np.float32)
         
+        # BULLHEAD FEATURES (4 features)
+        # Cumulative bullhead points per row, normalized by max possible (7*5=35 per row)
+        bullhead_vec = np.zeros(N_ROWS, dtype=np.float32)
+        for r, row in enumerate(board):
+            row_bullheads = sum(get_bullheads(card) for card in row)
+            # Normalize: max 5 cards * 7 bullheads = 35 per row
+            bullhead_vec[r] = min(row_bullheads / 35.0, 1.0)
+        
         # CONCATENATE ALL FEATURES
         state_vec = np.concatenate([
-            board_vec,      # 20 features
-            hand_vec,       # 104 features
-            visible_vec,    # 104 features
-            score_vec,      # 4 features
-            round_vec       # 1 feature
-        ])                  # Total: 233 features
+            board_vec,       # 20 features
+            hand_vec,        # 104 features
+            visible_vec,     # 104 features
+            score_vec,       # 4 features
+            round_vec,       # 1 feature
+            bullhead_vec     # 4 features
+        ])                   # Total: 237 features
         
         # LEGAL ACTION MASK
         # Binary mask indicating which cards can be legally played
@@ -153,10 +166,11 @@ def get_state_dim():
       - Visible: 104 cards = 104
       - Scores: 4 players = 4
       - Round: 1 value = 1
-      - Total: 233
+      - Bullheads: 4 rows = 4
+      - Total: 237
     
     Returns:
-        int: State vector dimension (233)
+        int: State vector dimension (237)
     """
-    # 20 + 104 + 104 + 4 + 1 = 233
-    return 20 + N_CARDS + N_CARDS + N_PLAYERS + 1
+    # 20 + 104 + 104 + 4 + 1 + 4 = 237
+    return 20 + N_CARDS + N_CARDS + N_PLAYERS + 1 + N_ROWS

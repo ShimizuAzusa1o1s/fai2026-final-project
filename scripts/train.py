@@ -99,9 +99,33 @@ def train_model(model_path=None, data_path="data/self_play_data.pt",
     model = TinyAlphaZeroNet(state_dim, n_actions).to(device)
     
     # Load pre-trained weights if available
+    # Handle size mismatches gracefully (e.g., from state dimension changes)
     if model_path and os.path.exists(model_path):
-        model.load_state_dict(torch.load(model_path, map_location=device))
-        print(f"Loaded existing model from {model_path}")
+        try:
+            model.load_state_dict(torch.load(model_path, map_location=device))
+            print(f"Loaded existing model from {model_path}")
+        except RuntimeError as e:
+            print(f"Warning: Could not load full checkpoint from {model_path}")
+            print(f"  Error: {str(e)}")
+            print(f"  Starting with freshly initialized model (state dimension may have changed)")
+            
+            # Try to load only compatible weights
+            try:
+                checkpoint = torch.load(model_path, map_location=device)
+                model_state = model.state_dict()
+                
+                # Load only weights that match in shape
+                compatible_keys = 0
+                for key in checkpoint:
+                    if key in model_state and checkpoint[key].shape == model_state[key].shape:
+                        model_state[key] = checkpoint[key]
+                        compatible_keys += 1
+                
+                if compatible_keys > 0:
+                    model.load_state_dict(model_state, strict=False)
+                    print(f"  Loaded {compatible_keys} compatible weight groups")
+            except Exception:
+                print(f"  Could not load any weights. Training from scratch.")
         
     # Load self-play training data from disk
     print(f"Loading data from {data_path}...")

@@ -7,7 +7,11 @@
         ["src.players.TA.public_baselines1", "Baseline5", {}, "B5"]
     ],
     "players": [
-        ["src.players.b12705048.mcts_balance", "MCTS", {}, "MCTSBalance"]
+        [
+            "src.players.b12705048.alphazero.alphazero", 
+            "AlphaZeroPlayer", 
+            {"model_path": "models/latest.pt"}
+        ]
     ],
     "engine": {
         "n_players": 4,

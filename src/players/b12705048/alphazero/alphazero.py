@@ -170,7 +170,7 @@ class AlphaZeroPlayer:
                    action_probabilities is a 104-d array over all possible cards
         """
         if use_mcts and self.n_playouts > 0:
-            # Use MCTS-guided action selection
+            # Use MCTS-guided action selection with fresh determinization per playout
             from .mcts import MCTS_PUCT
             
             # Build game state representation for MCTS
@@ -178,22 +178,17 @@ class AlphaZeroPlayer:
             scores = state_history.get('scores', [0] * 4)
             round_num = state_history.get('round', 0)
             
-            # Estimate opponent hands through determinization
-            hands = self._determinize_hands(current_hand, state_history)
+            # Create state object WITHOUT full hands (MCTS will determinize)
+            # Only include board and scores for root state
+            fast_state = FastState(board, scores, None, round_num)
             
-            # Create state object for fast state transitions during MCTS
-            fast_state = FastState(board, scores, hands, round_num)
-            
-            # Define state encoder for MCTS: converts FastState to neural network input
-            def mcts_encoder(fast_state, p_idx):
-                # Reconstruct a history dict compatible with Encoding.encode_state
-                mock_history = dict(state_history)
-                mock_history['board'] = fast_state.board
-                mock_history['scores'] = fast_state.scores
-                mock_history['round'] = fast_state.round
-                return Encoding.encode_state(mock_history, fast_state.hands[p_idx], p_idx)
+            # Define state encoder for MCTS: converts state to neural network input
+            def mcts_encoder(history_dict, hand, p_idx):
+                # Encoding expects a history dict format
+                return Encoding.encode_state(history_dict, hand, p_idx)
             
             # Run MCTS search with network guidance
+            # Fresh determinization happens inside MCTS._playout
             mcts = MCTS_PUCT(
                 policy_value_fn=self.model.predict,
                 c_puct=1.5,  # Exploration constant
@@ -201,7 +196,7 @@ class AlphaZeroPlayer:
                 time_limit=self.time_limit
             )
             best_a, target_probs = mcts.get_action(
-                fast_state, None, mcts_encoder, self.player_idx, temperature=temperature
+                fast_state, current_hand, mcts_encoder, self.player_idx, temperature=temperature
             )
             return best_a, target_probs
             

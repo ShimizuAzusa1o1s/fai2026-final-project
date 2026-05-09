@@ -18,6 +18,7 @@ Key components:
 import math
 import numpy as np
 import time
+import random
 
 
 class Node:
@@ -81,6 +82,34 @@ class Node:
         self.u_value = c_puct * self.prior_p * math.sqrt(self.parent.n_visits) / (1 + self.n_visits)
         # Total value: exploitation + exploration
         return self.q_value + self.u_value
+    
+    def get_value_normalized(self, c_puct, min_val, max_val):
+        """
+        Compute PUCT value with min-max normalization for Q-values.
+        
+        Normalizes Q-values based on bounds discovered during search,
+        improving value estimation when reward ranges vary.
+        
+        Args:
+            c_puct (float): Exploration constant
+            min_val (float): Minimum value observed in current search
+            max_val (float): Maximum value observed in current search
+        
+        Returns:
+            float: PUCT value with normalized Q-value component
+        """
+        # Normalize Q-value to [0, 1] range based on discovered bounds
+        if max_val > min_val:
+            normalized_q = (self.q_value - min_val) / (max_val - min_val)
+        else:
+            # All values are the same, use 0.5
+            normalized_q = 0.5
+        
+        # Exploration bonus: scaled by parent visit count and policy prior
+        self.u_value = c_puct * self.prior_p * math.sqrt(self.parent.n_visits) / (1 + self.n_visits)
+        
+        # Total value: normalized exploitation + exploration
+        return normalized_q + self.u_value
 
     def update(self, leaf_value):
         """
@@ -127,6 +156,11 @@ class MCTS_PUCT:
     
     This is repeated for many playouts, building an increasingly accurate
     value estimate for the root position.
+    
+    Features:
+      - Determinization: Fresh opponent hand shuffle per playout
+      - Policy-based opponent moves: Sample from network policy instead of random
+      - Min-max normalization: Track reward bounds for better Q-value scaling
     """
     
     def __init__(self, policy_value_fn, c_puct=5.0, n_playout=100, time_limit=0.9):
@@ -145,71 +179,168 @@ class MCTS_PUCT:
         self.c_puct = c_puct
         self.n_playout = n_playout
         self.time_limit = time_limit
+        
+        # Track min/max values discovered during search for normalization
+        self.min_value = float('inf')
+        self.max_value = float('-inf')
 
-    def _playout(self, state, env, state_encoder, player_idx, root_node):
+    def _determinize_hands(self, my_hand, board, visible_cards, total_cards_set):
+        """
+        Estimate opponent hands through determinization.
+        
+        Args:
+            my_hand (list): Current player's hand
+            board (list): Current board state (4 rows)
+            visible_cards (set): Set of visible cards
+            total_cards_set (set): Set of all possible cards (1-104)
+        
+        Returns:
+            list: List of 4 hands with randomly distributed unseen cards
+        """
+        # Compute unseen cards (not visible, not in my hand)
+        unseen_cards = list(total_cards_set - visible_cards - set(my_hand))
+        random.shuffle(unseen_cards)
+        
+        # Hand size
+        h = len(my_hand)
+        
+        # Distribute unseen cards to opponents
+        hands = [my_hand.copy()]  # Player 0 has my_hand
+        for i in range(1, 4):
+            hands.append(unseen_cards[:h])
+            unseen_cards = unseen_cards[h:]
+        
+        return hands
+
+    def _playout(self, root_state, my_hand, state_encoder, player_idx, root_node):
         """
         Execute a single MCTS playout: Selection -> Expansion -> Evaluation -> Backup.
         
-        Traverses from root to a leaf using PUCT, evaluates the leaf with the network,
-        and backpropagates the value to the root.
+        Fresh determinization: Creates new shuffled opponent hands at the start.
+        Policy-based opponents: Uses network policy to sample opponent actions.
         
         Args:
-            state (FastState): Initial game state for this playout
-            env: Environment object (unused, kept for compatibility)
+            root_state (FastState): Initial game state for search
+            my_hand (list): Current player's known hand
             state_encoder (callable): Function to encode state for network
-                                     Takes (fast_state, player_idx) -> (state_vec, mask)
             player_idx (int): Index of the current player (0-3)
             root_node (Node): Root of MCTS search tree
         """
+        from .fast_env import FastState
+        
+        # FRESH DETERMINIZATION: Create new shuffled hands for this playout
+        board = root_state.board
+        visible_cards = set()
+        for row in board:
+            visible_cards.update(row)
+        
+        total_cards = set(range(1, 105))
+        hands = self._determinize_hands(my_hand, board, visible_cards, total_cards)
+        
+        # Create new state with shuffled hands
+        curr_state = FastState(root_state.board, root_state.scores, hands, root_state.round)
+        
         node = root_node
-        curr_state = state.clone()  # Copy state to avoid mutation
         
         # SELECTION & TRAVERSAL: Follow best actions down the tree
         while not node.is_leaf():
             # PUCT formula: select action with highest upper confidence bound
-            action, node = max(
-                node.children.items(),
-                key=lambda act_node: act_node[1].get_value(self.c_puct)
-            )
+            # Use normalized version if bounds are available
+            if self.min_value != float('inf') and self.max_value != float('-inf'):
+                action, node = max(
+                    node.children.items(),
+                    key=lambda act_node: act_node[1].get_value_normalized(
+                        self.c_puct, self.min_value, self.max_value
+                    )
+                )
+            else:
+                action, node = max(
+                    node.children.items(),
+                    key=lambda act_node: act_node[1].get_value(self.c_puct)
+                )
             
-            # Execute action in the game state
-            # Player plays chosen action, opponents play random cards
+            # EXECUTE ACTION: Player plays action, opponents use policy-guided sampling
             actions = {player_idx: action}
+            
             for i in range(4):
                 if i != player_idx:
-                    # Opponent heuristic: random card from hand
-                    if curr_state.hands and len(curr_state.hands[i]) > 0:
-                        opp_a = np.random.choice(curr_state.hands[i])
-                    else:
-                        # Fallback if hand empty (shouldn't happen mid-game)
-                        opp_a = 1
-                    actions[i] = opp_a
+                    # Policy-guided opponent move: Use network to sample opponent action
+                    opp_hand = curr_state.hands[i] if curr_state.hands else []
                     
+                    if len(opp_hand) > 0:
+                        # Get network policy for opponent from their perspective
+                        try:
+                            # Mock history for opponent perspective
+                            mock_history = {
+                                'board': curr_state.board,
+                                'scores': curr_state.scores,
+                                'round': curr_state.round,
+                                'history_matrix': [],
+                                'board_history': None
+                            }
+                            opp_state_vec, opp_mask = state_encoder(mock_history, opp_hand, i)
+                            opp_probs, _ = self.policy_value_fn(opp_state_vec, opp_mask)
+                            
+                            # Sample action from policy distribution, restricted to legal moves
+                            legal_action_probs = []
+                            legal_actions_list = []
+                            for card in opp_hand:
+                                if opp_probs[card - 1] > 0:
+                                    legal_action_probs.append(opp_probs[card - 1])
+                                    legal_actions_list.append(card)
+                            
+                            if len(legal_action_probs) > 0:
+                                # Normalize probabilities and sample
+                                legal_action_probs = np.array(legal_action_probs)
+                                legal_action_probs = legal_action_probs / legal_action_probs.sum()
+                                opp_a = np.random.choice(legal_actions_list, p=legal_action_probs)
+                            else:
+                                # Fallback: random if network gives 0 probability to all
+                                opp_a = np.random.choice(opp_hand)
+                        except Exception:
+                            # Fallback to random if network inference fails
+                            opp_a = np.random.choice(opp_hand)
+                    else:
+                        # Empty hand (shouldn't happen mid-game)
+                        opp_a = 1
+                    
+                    actions[i] = opp_a
+            
             # Apply action: update board and scores
             curr_state = curr_state.step(actions)
             
-        # TERMINATION CHECK: Game over or max depth reached
+        # TERMINATION CHECK: Game over
         if curr_state.round >= 10:
-            # Game has ended (10 rounds completed in 6 Nimmt!)
-            # Compute final outcome from this player's perspective
-            
+            # Game has ended (10 rounds completed)
             my_score = curr_state.scores[player_idx]
-            # Average opponent score (lower is better in 6 Nimmt!)
             opp_scores = sum(curr_state.scores[i] for i in range(4) if i != player_idx) / 3
-            # Difference: positive if we did better (lower score)
             diff = opp_scores - my_score
-            # Normalize to [-1, 1]
             leaf_value = max(-1.0, min(1.0, diff / 50.0))
+            
+            # Track bounds for min-max normalization
+            self.min_value = min(self.min_value, leaf_value)
+            self.max_value = max(self.max_value, leaf_value)
             
             # Backup: propagate value to root
             node.update_recursive(leaf_value)
             return
-            
+        
         # EXPANSION & EVALUATION: Network forward pass at leaf
-        state_vec, mask = state_encoder(curr_state, player_idx)
+        mock_history = {
+            'board': curr_state.board,
+            'scores': curr_state.scores,
+            'round': curr_state.round,
+            'history_matrix': [],
+            'board_history': None
+        }
+        state_vec, mask = state_encoder(mock_history, curr_state.hands[player_idx], player_idx)
         action_probs, leaf_value = self.policy_value_fn(state_vec, mask)
         
-        # Filter policy to only legal actions (cards in hand)
+        # Track bounds for min-max normalization
+        self.min_value = min(self.min_value, leaf_value)
+        self.max_value = max(self.max_value, leaf_value)
+        
+        # Filter policy to only legal actions
         legal_actions = curr_state.hands[player_idx]
         filtered_probs = {
             act: action_probs[act-1]
@@ -217,28 +348,27 @@ class MCTS_PUCT:
             if action_probs[act-1] > 0.0
         }
         
-        # Fallback: if network assigns 0 probability to all legal actions,
-        # use uniform distribution
         if len(filtered_probs) == 0:
             prob = 1.0 / len(legal_actions)
             filtered_probs = {act: prob for act in legal_actions}
-            
+        
         # Expand node with filtered legal actions
         node.expand(filtered_probs)
-        # Backup: propagate network value estimate to root
+        # Backup: propagate value to root
         node.update_recursive(leaf_value)
 
-    def get_action(self, state, env, state_encoder, player_idx, temperature=1e-3):
+    def get_action(self, state, my_hand, state_encoder, player_idx, temperature=1e-3):
         """
         Compute best action at the root using MCTS.
         
-        Runs many playouts to estimate values of actions, then selects based on:
+        Runs many playouts with fresh determinization each time to estimate values,
+        then selects based on:
           - temperature=0: greedy (pick most-visited action)
           - temperature>0: stochastic (sample proportional to visits^(1/temp))
         
         Args:
-            state (FastState): Current game state
-            env: Environment object (unused)
+            state (FastState): Current game state (without complete hand info)
+            my_hand (list): Current player's known hand
             state_encoder (callable): State encoding function
             player_idx (int): Current player index
             temperature (float): Action selection temperature (0=greedy, 1=stochastic)
@@ -248,15 +378,26 @@ class MCTS_PUCT:
                    best_action: Selected card (1-104)
                    action_probabilities: 104-d probability distribution
         """
+        # Reset min-max bounds for this search
+        self.min_value = float('inf')
+        self.max_value = float('-inf')
+        
         # Create root node
         root = Node(None, 1.0, None)
         
         # Initialize root with network policy evaluation
-        state_vec, mask = state_encoder(state, player_idx)
+        mock_history = {
+            'board': state.board,
+            'scores': state.scores,
+            'round': state.round,
+            'history_matrix': [],
+            'board_history': None
+        }
+        state_vec, mask = state_encoder(mock_history, my_hand, player_idx)
         action_probs, _ = self.policy_value_fn(state_vec, mask)
         
         # Filter to legal actions
-        legal_actions = state.hands[player_idx]
+        legal_actions = my_hand
         filtered_probs = {
             act: action_probs[act-1]
             for act in legal_actions
@@ -274,12 +415,10 @@ class MCTS_PUCT:
         for i in range(self.n_playout):
             # Check time limit
             if time.time() - start_time > self.time_limit:
-                # Time budget exceeded, stop search
-                # print(f"MCTS budget cut off at playout {i}")
                 break
                 
-            # Execute one MCTS playout
-            self._playout(state, env, state_encoder, player_idx, root)
+            # Execute one MCTS playout with fresh determinization
+            self._playout(state, my_hand, state_encoder, player_idx, root)
             
         # ACTION SELECTION: Choose action based on visit counts
         act_visits = [(act, node.n_visits) for act, node in root.children.items()]
