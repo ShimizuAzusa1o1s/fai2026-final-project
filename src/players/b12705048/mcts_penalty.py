@@ -17,6 +17,7 @@ Key Features:
 
 import time
 import random
+import numpy as np
 
 
 class MCTS():
@@ -44,6 +45,11 @@ class MCTS():
         self.player_idx = player_idx
         self.time_limit = 0.9  # seconds available per decision
         self.total_cards = set(range(1, 105))  # All possible card values in the deck
+        
+        # Pre-compute bullhead lookup table for fast O(1) lookups during simulation
+        self.bullhead_lookup = np.zeros(105, dtype=np.int8)
+        for card in range(1, 105):
+            self.bullhead_lookup[card] = self._get_bullheads(card)
 
     def _get_bullheads(self, card):
         """
@@ -140,7 +146,7 @@ class MCTS():
                     min_row_idx = -1
                     
                     for idx, row in enumerate(board):
-                        row_bullheads = sum(self._get_bullheads(c) for c in row)
+                        row_bullheads = int(np.sum(self.bullhead_lookup[row]))
                         if row_bullheads < min_bullheads:
                             min_bullheads = row_bullheads
                             min_row_idx = idx
@@ -164,7 +170,7 @@ class MCTS():
                     # 6th Card Rule: When a row reaches 6 cards
                     if len(target_row) == 6:
                         # Player takes bullheads from first 5 cards
-                        row_bullheads = sum(self._get_bullheads(c) for c in target_row[:5])
+                        row_bullheads = int(np.sum(self.bullhead_lookup[target_row[:5]]))
                         if owner == 'me':
                             my_penalty += row_bullheads
                         else:
