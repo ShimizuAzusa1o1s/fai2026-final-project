@@ -141,15 +141,13 @@ class MCTS():
                 
                 if not valid_rows:
                     # Low Card Rule: Card is smaller than all row ends
-                    # Player must take one row - choose the cheapest (minimum bullheads)
-                    min_bullheads = float('inf')
-                    min_row_idx = -1
-                    
-                    for idx, row in enumerate(board):
-                        row_bullheads = int(np.sum(self.bullhead_lookup[row]))
-                        if row_bullheads < min_bullheads:
-                            min_bullheads = row_bullheads
-                            min_row_idx = idx
+                    # Player must take one row - choose using (bullheads, length, index) tiebreaker
+                    # to match the game engine's exact resolution
+                    min_row_idx = min(
+                        range(len(board)),
+                        key=lambda idx: (int(np.sum(self.bullhead_lookup[board[idx]])), len(board[idx]), idx)
+                    )
+                    min_bullheads = int(np.sum(self.bullhead_lookup[board[min_row_idx]]))
                             
                     # Track penalty for the card owner
                     if owner == 'me':

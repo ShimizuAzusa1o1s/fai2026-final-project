@@ -151,14 +151,13 @@ class MCTS():
                 
                 if not valid_rows:
                     # Low Card Rule: Card is smaller than all row ends
-                    # Find the cheapest row using precomputed row_bullheads (no recalculation)
-                    min_bullheads = float('inf')
-                    min_row_idx = -1
-                    
-                    for idx in range(4):
-                        if row_bullheads[idx] < min_bullheads:
-                            min_bullheads = row_bullheads[idx]
-                            min_row_idx = idx
+                    # Find the cheapest row using (bullheads, length, index) tiebreaker
+                    # to match the game engine's exact resolution
+                    min_row_idx = min(
+                        range(4),
+                        key=lambda idx: (row_bullheads[idx], len(board[idx]), idx)
+                    )
+                    min_bullheads = row_bullheads[min_row_idx]
                             
                     # Track penalty only for our cards
                     if owner == 'me':

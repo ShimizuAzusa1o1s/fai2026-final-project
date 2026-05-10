@@ -26,7 +26,7 @@ from src.engine import Engine
 from src.players.b12705048.alphazero.alphazero import AlphaZeroPlayer
 from src.players.b12705048.alphazero.state_encoding import Encoding, get_state_dim, N_CARDS
 
-def self_play_episode(model_path=None, num_games=10, timeout=1.0, iteration=None):
+def self_play_episode(model_path=None, num_games=10, timeout=1.0, iteration=None, num_playouts=500):
     """
     Run self-play games and collect training data.
     
@@ -45,6 +45,7 @@ def self_play_episode(model_path=None, num_games=10, timeout=1.0, iteration=None
         timeout (float): Time limit per move decision in seconds. Default is 1.0.
         iteration (int, optional): Training iteration number for adaptive MCTS playouts.
                                   If provided, playouts are reduced in early iterations.
+        num_playouts (int): MCTS playouts per move. Default is 500.
     
     Returns:
         list: Training data tuples of form (state_vec, mask, target_probs, value)
@@ -58,7 +59,7 @@ def self_play_episode(model_path=None, num_games=10, timeout=1.0, iteration=None
     # Create four AlphaZero agents (one per player)
     # n_playouts controls how much MCTS search to do per move
     # iteration parameter enables adaptive playouts (fewer playouts in early training)
-    players = [AlphaZeroPlayer(i, model_path, n_playouts=500, time_limit=timeout, iteration=iteration) for i in range(4)]
+    players = [AlphaZeroPlayer(i, model_path, n_playouts=num_playouts, time_limit=timeout, iteration=iteration) for i in range(4)]
     
     # Configure the game engine for 4-player 10-round games
     engine_config = {
@@ -160,7 +161,7 @@ def self_play_episode(model_path=None, num_games=10, timeout=1.0, iteration=None
             
     return data
 
-def generate_parallel(num_games=10, n_jobs=4, model_path=None, iteration=None):
+def generate_parallel(num_games=10, n_jobs=4, model_path=None, iteration=None, num_playouts=500, timeout=1.0):
     """
     Generate self-play data using parallel job scheduling.
     
@@ -174,20 +175,22 @@ def generate_parallel(num_games=10, n_jobs=4, model_path=None, iteration=None):
         model_path (str, optional): Path to model checkpoint. If None, uses
                                    random initialization.
         iteration (int, optional): Training iteration number for adaptive MCTS playouts.
+        num_playouts (int): MCTS playouts per move. Default is 500.
+        timeout (float): Time limit per move in seconds. Default is 1.0.
     
     Returns:
         list: Aggregated training data from all parallel processes.
     """
     if n_jobs == 1:
         # Single-process mode: useful for debugging
-        return self_play_episode(model_path, num_games, iteration=iteration)
+        return self_play_episode(model_path, num_games, timeout=timeout, iteration=iteration, num_playouts=num_playouts)
         
     # Divide games evenly across workers
     games_per_job = num_games // n_jobs
     
     # Launch parallel jobs using joblib's Parallel backend
     results = Parallel(n_jobs=n_jobs, backend='loky')(
-        delayed(self_play_episode)(model_path, games_per_job, iteration=iteration) for _ in range(n_jobs)
+        delayed(self_play_episode)(model_path, games_per_job, timeout=timeout, iteration=iteration, num_playouts=num_playouts) for _ in range(n_jobs)
     )
     
     # Aggregate results from all processes
@@ -222,23 +225,27 @@ if __name__ == "__main__":
     os.makedirs("models", exist_ok=True)
     os.makedirs("data", exist_ok=True)
     
+    # Determine model path: use latest checkpoint if it exists
+    model_path = "models/latest.pt" if os.path.exists("models/latest.pt") else None
+    
     print(f"Generating self-play data...")
     print(f"  Games: {args.num_games}, Parallel jobs: {args.num_parallel_jobs}")
     print(f"  Playouts: {args.num_playouts}, Time limit: {args.time_limit}s")
+    print(f"  Model: {model_path or '(random initialization)'}")
     if args.iteration is not None:
         print(f"  Iteration: {args.iteration} (adaptive playouts enabled)")
     
     # Generate training data from self-play games
-    # Note: num_playouts and c_puct are currently hardcoded in alphazero.py
-    # To use the command-line args, you would need to pass them through to AlphaZeroPlayer
     data = generate_parallel(
         num_games=args.num_games,
         n_jobs=args.num_parallel_jobs,
-        model_path=None,
-        iteration=args.iteration
+        model_path=model_path,
+        iteration=args.iteration,
+        num_playouts=args.num_playouts,
+        timeout=args.time_limit
     )
     
-    print(f"Generated {len(data)} training examples ({len(data)//10 if len(data) else 0} game trajectories)")
+    print(f"Generated {len(data)} training examples ({len(data)//40 if len(data) else 0} games)")
     
     # Save training data to disk for use by train.py
     torch.save(data, "data/self_play_data.pt")

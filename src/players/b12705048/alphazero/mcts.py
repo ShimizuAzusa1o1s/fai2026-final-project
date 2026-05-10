@@ -1,6 +1,6 @@
 """
-Monte Carlo Tree Search with Policy/Value Guidance
-===================================================
+Monte Carlo Tree Search with Policy/Value Guidance (Optimized)
+===============================================================
 
 This module implements the MCTS-PUCT algorithm, which combines Monte Carlo Tree Search
 with neural network guidance. The neural network provides:
@@ -13,6 +13,13 @@ using the formula: Q(s,a) + c_puct * P(a|s) * sqrt(N(s)) / (1 + N(a|s))
 Key components:
   - Node: Single MCTS tree node with visit counts and action values
   - MCTS_PUCT: MCTS engine with policy-value network guidance
+
+Optimizations over the original implementation:
+  - Opponent moves use random sampling instead of per-opponent network inference,
+    eliminating the 3x forward pass bottleneck per traversal step
+  - Only 1 network forward pass per playout (at the leaf node)
+  - Pre-computed visible cards and reusable data structures
+  - Tighter time management with per-playout checks
 """
 
 import math
@@ -31,6 +38,8 @@ class Node:
       - PUCT values (upper confidence bound for action selection)
       - Prior probabilities (from neural network policy head)
     """
+    
+    __slots__ = ['parent', 'action', 'children', 'n_visits', 'q_value', 'u_value', 'prior_p']
     
     def __init__(self, parent, prior_p, action):
         """
@@ -120,7 +129,7 @@ class Node:
         """
         self.n_visits += 1
         # Running average: incrementally update Q-value
-        self.q_value += 1.0 * (leaf_value - self.q_value) / self.n_visits
+        self.q_value += (leaf_value - self.q_value) / self.n_visits
 
     def update_recursive(self, leaf_value):
         """
@@ -151,7 +160,7 @@ class MCTS_PUCT:
     Implements the MCTS-PUCT algorithm from AlphaZero:
       1. Selection: Use PUCT to traverse tree from root to leaf
       2. Expansion: Expand leaf with network policy
-      3. Evaluation: Use network value or rollout to leaf to get value
+      3. Evaluation: Use network value to get leaf value
       4. Backup: Propagate value back to root
     
     This is repeated for many playouts, building an increasingly accurate
@@ -159,8 +168,14 @@ class MCTS_PUCT:
     
     Features:
       - Determinization: Fresh opponent hand shuffle per playout
-      - Policy-based opponent moves: Sample from network policy instead of random
+      - Random opponent moves: Fast random sampling (no per-opponent network calls)
       - Min-max normalization: Track reward bounds for better Q-value scaling
+    
+    Performance Note:
+      The original implementation called the neural network for each of the 3
+      opponents at every tree traversal step (3 forward passes per step).
+      This optimization replaces those with random sampling, reducing the
+      per-playout cost from ~4 forward passes to exactly 1 (at the leaf).
     """
     
     def __init__(self, policy_value_fn, c_puct=5.0, n_playout=100, time_limit=0.9):
@@ -212,12 +227,15 @@ class MCTS_PUCT:
         
         return hands
 
-    def _playout(self, root_state, my_hand, state_encoder, player_idx, root_node):
+    def _playout(self, root_state, my_hand, state_encoder, player_idx, root_node, visible_cards=None, state_history=None):
         """
         Execute a single MCTS playout: Selection -> Expansion -> Evaluation -> Backup.
         
         Fresh determinization: Creates new shuffled opponent hands at the start.
-        Policy-based opponents: Uses network policy to sample opponent actions.
+        Random opponents: Uses random card sampling for opponent moves (fast).
+        
+        Performance: Only 1 neural network forward pass per playout (at the leaf),
+        compared to 4+ in the original implementation.
         
         Args:
             root_state (FastState): Initial game state for search
@@ -225,17 +243,19 @@ class MCTS_PUCT:
             state_encoder (callable): Function to encode state for network
             player_idx (int): Index of the current player (0-3)
             root_node (Node): Root of MCTS search tree
+            visible_cards (set, optional): Pre-computed visible cards for determinization
+            state_history (dict, optional): Full game history for state encoding
         """
         from .fast_env import FastState
         
         # FRESH DETERMINIZATION: Create new shuffled hands for this playout
-        board = root_state.board
-        visible_cards = set()
-        for row in board:
-            visible_cards.update(row)
-        
+        # Use pre-computed visible_cards (includes history) if available
         total_cards = set(range(1, 105))
-        hands = self._determinize_hands(my_hand, board, visible_cards, total_cards)
+        if visible_cards is None:
+            visible_cards = set()
+            for row in root_state.board:
+                visible_cards.update(row)
+        hands = self._determinize_hands(my_hand, root_state.board, visible_cards, total_cards)
         
         # Create new state with shuffled hands
         curr_state = FastState(root_state.board, root_state.scores, hands, root_state.round)
@@ -243,10 +263,11 @@ class MCTS_PUCT:
         node = root_node
         
         # SELECTION & TRAVERSAL: Follow best actions down the tree
+        use_normalized = (self.min_value != float('inf') and self.max_value != float('-inf'))
+        
         while not node.is_leaf():
             # PUCT formula: select action with highest upper confidence bound
-            # Use normalized version if bounds are available
-            if self.min_value != float('inf') and self.max_value != float('-inf'):
+            if use_normalized:
                 action, node = max(
                     node.children.items(),
                     key=lambda act_node: act_node[1].get_value_normalized(
@@ -259,51 +280,18 @@ class MCTS_PUCT:
                     key=lambda act_node: act_node[1].get_value(self.c_puct)
                 )
             
-            # EXECUTE ACTION: Player plays action, opponents use policy-guided sampling
+            # EXECUTE ACTION: Player plays chosen action, opponents play randomly
+            # Random opponent sampling is ~100x faster than per-opponent network inference
             actions = {player_idx: action}
             
             for i in range(4):
                 if i != player_idx:
-                    # Policy-guided opponent move: Use network to sample opponent action
                     opp_hand = curr_state.hands[i] if curr_state.hands else []
-                    
                     if len(opp_hand) > 0:
-                        # Get network policy for opponent from their perspective
-                        try:
-                            # Mock history for opponent perspective
-                            mock_history = {
-                                'board': curr_state.board,
-                                'scores': curr_state.scores,
-                                'round': curr_state.round,
-                                'history_matrix': [],
-                                'board_history': None
-                            }
-                            opp_state_vec, opp_mask = state_encoder(mock_history, opp_hand, i)
-                            opp_probs, _ = self.policy_value_fn(opp_state_vec, opp_mask)
-                            
-                            # Sample action from policy distribution, restricted to legal moves
-                            legal_action_probs = []
-                            legal_actions_list = []
-                            for card in opp_hand:
-                                if opp_probs[card - 1] > 0:
-                                    legal_action_probs.append(opp_probs[card - 1])
-                                    legal_actions_list.append(card)
-                            
-                            if len(legal_action_probs) > 0:
-                                # Normalize probabilities and sample
-                                legal_action_probs = np.array(legal_action_probs)
-                                legal_action_probs = legal_action_probs / legal_action_probs.sum()
-                                opp_a = np.random.choice(legal_actions_list, p=legal_action_probs)
-                            else:
-                                # Fallback: random if network gives 0 probability to all
-                                opp_a = np.random.choice(opp_hand)
-                        except Exception:
-                            # Fallback to random if network inference fails
-                            opp_a = np.random.choice(opp_hand)
+                        # Random opponent move (fast — no network inference)
+                        opp_a = opp_hand[random.randrange(len(opp_hand))]
                     else:
-                        # Empty hand (shouldn't happen mid-game)
                         opp_a = 1
-                    
                     actions[i] = opp_a
             
             # Apply action: update board and scores
@@ -326,12 +314,13 @@ class MCTS_PUCT:
             return
         
         # EXPANSION & EVALUATION: Network forward pass at leaf
+        # This is the ONLY network call per playout
         mock_history = {
             'board': curr_state.board,
             'scores': curr_state.scores,
             'round': curr_state.round,
-            'history_matrix': [],
-            'board_history': None
+            'history_matrix': state_history.get('history_matrix', []) if state_history else [],
+            'board_history': state_history.get('board_history', None) if state_history else None
         }
         state_vec, mask = state_encoder(mock_history, curr_state.hands[player_idx], player_idx)
         action_probs, leaf_value = self.policy_value_fn(state_vec, mask)
@@ -357,7 +346,7 @@ class MCTS_PUCT:
         # Backup: propagate value to root
         node.update_recursive(leaf_value)
 
-    def get_action(self, state, my_hand, state_encoder, player_idx, temperature=1e-3):
+    def get_action(self, state, my_hand, state_encoder, player_idx, temperature=1e-3, state_history=None):
         """
         Compute best action at the root using MCTS.
         
@@ -372,6 +361,7 @@ class MCTS_PUCT:
             state_encoder (callable): State encoding function
             player_idx (int): Current player index
             temperature (float): Action selection temperature (0=greedy, 1=stochastic)
+            state_history (dict, optional): Full game history for encoding and determinization
         
         Returns:
             tuple: (best_action, action_probabilities)
@@ -390,9 +380,21 @@ class MCTS_PUCT:
             'board': state.board,
             'scores': state.scores,
             'round': state.round,
-            'history_matrix': [],
-            'board_history': None
+            'history_matrix': state_history.get('history_matrix', []) if state_history else [],
+            'board_history': state_history.get('board_history', None) if state_history else None
         }
+        
+        # Compute full visible cards set for determinization
+        # Include board, history_matrix, and board_history cards
+        visible_cards = set()
+        for row in state.board:
+            visible_cards.update(row)
+        if state_history:
+            for past_round in state_history.get('history_matrix', []):
+                visible_cards.update(past_round)
+            if state_history.get('board_history'):
+                for row in state_history['board_history'][0]:
+                    visible_cards.update(row)
         state_vec, mask = state_encoder(mock_history, my_hand, player_idx)
         action_probs, _ = self.policy_value_fn(state_vec, mask)
         
@@ -413,14 +415,15 @@ class MCTS_PUCT:
         # Run playouts within time/playout budget
         # Use perf_counter for consistent, high-precision timing
         start_time = time.perf_counter()
+        deadline = start_time + self.time_limit - 0.005  # 5ms safety buffer
+        
         for i in range(self.n_playout):
-            # Check time limit: leave 5ms buffer to ensure we return before timeout
-            elapsed = time.perf_counter() - start_time
-            if elapsed > self.time_limit - 0.005:
+            # Check time limit before each playout
+            if time.perf_counter() > deadline:
                 break
                 
             # Execute one MCTS playout with fresh determinization
-            self._playout(state, my_hand, state_encoder, player_idx, root)
+            self._playout(state, my_hand, state_encoder, player_idx, root, visible_cards=visible_cards, state_history=state_history)
             
         # ACTION SELECTION: Choose action based on visit counts
         act_visits = [(act, node.n_visits) for act, node in root.children.items()]
