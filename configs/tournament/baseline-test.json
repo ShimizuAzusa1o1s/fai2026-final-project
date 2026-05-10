@@ -33,12 +33,10 @@
     ],
     "players": [
         [
-            "src.players.b12705048.alphazero.alphazero",
-            "AlphaZeroPlayer",
-            {
-                "model_path": "models/best.pt"
-            },
-            "MCTSAZO1"
+            "src.players.b12705048.mcts_v3_variance",
+            "MCTS",
+            {},
+            "MCTSV3"
         ]
     ],
     "engine": {
