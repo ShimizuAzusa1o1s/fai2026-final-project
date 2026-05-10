@@ -1,8 +1,6 @@
 **/__pycache__/
 results
 data
-models
 
 # Local Config Files
 .*
-conda

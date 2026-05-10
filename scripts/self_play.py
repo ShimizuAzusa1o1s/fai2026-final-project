@@ -247,6 +247,23 @@ if __name__ == "__main__":
     
     print(f"Generated {len(data)} training examples ({len(data)//40 if len(data) else 0} games)")
     
-    # Save training data to disk for use by train.py
-    torch.save(data, "data/self_play_data.pt")
-    print("Saved to data/self_play_data.pt")
+    # Accumulate training data with a sliding window
+    # Instead of overwriting, append to existing data and keep the last MAX_DATA_SIZE examples
+    # This gives the network a richer, more diverse training set
+    MAX_DATA_SIZE = 20000  # ~500 games worth of data
+    
+    data_path = "data/self_play_data.pt"
+    if os.path.exists(data_path):
+        try:
+            existing_data = torch.load(data_path, weights_only=False)
+            existing_data.extend(data)
+            # Keep only the most recent examples (sliding window)
+            if len(existing_data) > MAX_DATA_SIZE:
+                existing_data = existing_data[-MAX_DATA_SIZE:]
+            data = existing_data
+            print(f"Accumulated data: {len(data)} total examples (window={MAX_DATA_SIZE})")
+        except Exception as e:
+            print(f"Warning: Could not load existing data ({e}). Starting fresh.")
+    
+    torch.save(data, data_path)
+    print(f"Saved to {data_path}")

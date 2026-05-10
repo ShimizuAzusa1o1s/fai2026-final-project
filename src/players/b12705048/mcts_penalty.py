@@ -43,8 +43,8 @@ class MCTS():
             player_idx (int): The player's index in the game (0-3)
         """
         self.player_idx = player_idx
-        self.time_limit = 0.9  # seconds available per decision
-        self.total_cards = set(range(1, 105))  # All possible card values in the deck
+        self.time_limit = 0.9                   # seconds available per decision
+        self.total_cards = set(range(1, 105))   # all possible card values in the deck
         
         # Pre-compute bullhead lookup table for fast O(1) lookups during simulation
         self.bullhead_lookup = np.zeros(105, dtype=np.int8)
