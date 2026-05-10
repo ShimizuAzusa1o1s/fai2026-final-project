@@ -36,7 +36,7 @@
             "src.players.b12705048.alphazero.alphazero",
             "AlphaZeroPlayer",
             {
-                "model_path": "models/alphazero_latest.pt"
+                "model_path": "models/best.pt"
             },
             "MCTSAZO1"
         ]

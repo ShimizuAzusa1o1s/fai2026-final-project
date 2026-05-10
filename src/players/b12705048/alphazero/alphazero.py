@@ -24,7 +24,7 @@ import numpy as np
 
 from .fast_env import FastState
 from .state_encoding import Encoding, get_state_dim, N_CARDS
-from .model import TinyAlphaZeroNet
+from .model import AlphaZeroNet
 
 
 class AlphaZeroPlayer:
@@ -83,7 +83,7 @@ class AlphaZeroPlayer:
             self.device = device
             
         # Initialize neural network
-        self.model = TinyAlphaZeroNet(self.state_dim, N_CARDS).to(self.device)
+        self.model = AlphaZeroNet(self.state_dim, N_CARDS).to(self.device)
         self.model.device = self.device
         
         # Load pre-trained weights if available

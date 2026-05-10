@@ -24,7 +24,7 @@ import numpy as np
 import sys
 sys.path.append(os.getcwd())
 
-from src.players.b12705048.alphazero.model import TinyAlphaZeroNet
+from src.players.b12705048.alphazero.model import AlphaZeroNet
 from src.players.b12705048.alphazero.state_encoding import get_state_dim, N_CARDS
 
 
@@ -96,7 +96,7 @@ def train_model(model_path=None, data_path="data/self_play_data.pt",
     state_dim = get_state_dim()
     n_actions = N_CARDS
     
-    model = TinyAlphaZeroNet(state_dim, n_actions).to(device)
+    model = AlphaZeroNet(state_dim, n_actions).to(device)
     
     # Load pre-trained weights if available
     # Handle size mismatches gracefully (e.g., from state dimension changes)
