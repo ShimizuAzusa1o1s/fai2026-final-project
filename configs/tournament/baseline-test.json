@@ -33,10 +33,10 @@
     ],
     "players": [
         [
-            "src.players.b12705048.mcts_v3_variance",
+            "src.players.b12705048.mcts_penalty_o2",
             "MCTS",
             {},
-            "MCTSV3"
+            "MCTSO2"
         ]
     ],
     "engine": {

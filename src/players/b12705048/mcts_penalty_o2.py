@@ -31,11 +31,11 @@ class MCTS():
         # Card penalties: 55 has 7 points, multiples of 11 have 5, etc.
         self.bullhead_lookup = np.zeros(105, dtype=np.int32)
         for card in range(1, 105):
-            if card == 55: self.bullhead_lookup[card] = 7      # Special case: 55 is 7 bullheads
-            elif card % 11 == 0: self.bullhead_lookup[card] = 5    # Multiples of 11: 5 bullheads
-            elif card % 10 == 0: self.bullhead_lookup[card] = 3    # Multiples of 10: 3 bullheads
-            elif card % 5 == 0: self.bullhead_lookup[card] = 2     # Multiples of 5: 2 bullheads
-            else: self.bullhead_lookup[card] = 1                   # All others: 1 bullhead
+            if card == 55: self.bullhead_lookup[card] = 7           # Special case: 55 is 7 bullheads
+            elif card % 11 == 0: self.bullhead_lookup[card] = 5     # Multiples of 11: 5 bullheads
+            elif card % 10 == 0: self.bullhead_lookup[card] = 3     # Multiples of 10: 3 bullheads
+            elif card % 5 == 0: self.bullhead_lookup[card] = 2      # Multiples of 5: 2 bullheads
+            else: self.bullhead_lookup[card] = 1                    # All others: 1 bullhead
 
     def action(self, hand, history):
         """Determine the best card to play using vectorized MCTS simulation.
@@ -102,24 +102,29 @@ class MCTS():
         b_idx = np.arange(B)  # Batch indices [0, 1, ..., B-1]
         row_indices = np.arange(4)  # Row indices [0, 1, 2, 3]
         
-        # Pre-generate my move sequences for all parallel batch evaluations
-        # Each batch evaluates a different first card, then plays remaining cards randomly
+        # Initialize move tracking array for this batch
+        # Populated fresh each rollout to maintain Monte Carlo exploration
         my_moves = np.empty((B, T), dtype=np.int32)
         my_moves[:, 0] = actions  # First move: the action being evaluated
-        for i in range(B):
-            # Remaining moves: shuffle all cards except the first one
-            rem = [c for c in hand if c != actions[i]]
-            np.random.shuffle(rem)
-            my_moves[i, 1:] = rem  # Fill remaining turns with shuffled cards
 
         # --- 3. VECTORIZED MCTS SIMULATION LOOP ---
         # This loop runs repeated rollouts, evaluating all actions in parallel
+        # CRITICAL: Both opponent and agent moves are randomized each iteration
         while time.perf_counter() - start_time < self.time_limit:
             
             # Opponent hand determinization: shuffle unseen cards and distribute to 3 opponents
             # This simulates a random deal of unknown opponent cards
             np.random.shuffle(unseen_cards_arr)
             opp_moves = unseen_cards_arr[:3*T].reshape(3, T)  # Shape: (3 opponents, T turns)
+
+            # CRITICAL FIX: Shuffle my future moves for this specific rollout iteration.
+            # This ensures the agent explores different card sequences each simulation,
+            # maintaining true Monte Carlo exploration instead of playing fixed future cards.
+            for i in range(B):
+                # Remaining moves: shuffle all cards except the first one
+                rem = [c for c in hand if c != actions[i]]
+                np.random.shuffle(rem)
+                my_moves[i, 1:] = rem  # Fill remaining turns with shuffled cards
             
             # Replicate base board state across all B batch evaluations
             # Now shape is (B, 4) so each batch has its own copy of the board
