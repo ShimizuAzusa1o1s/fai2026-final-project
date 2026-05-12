@@ -3,9 +3,9 @@
     "server_port": 8888,
     "username": "Azusa",
     "password": "LaoWang1015@@",
-    "label": "Azusa_MCTSNP_Exp4",
+    "label": "Azusa_B3",
     "player": {
-        "path": "src.players.b12705048.mcts_hand_pressure",
+        "path": "src.players.b12705048.mcts_penalty_np",
         "class": "MCTS",
         "args": {}
     }

@@ -3,7 +3,7 @@
     "server_port": 8888,
     "username": "Azusa",
     "password": "LaoWang1015@@",
-    "label": "Azusa_MCTSPrimal",
+    "label": "Azusa_B1",
     "player": {
         "path": "src.players.b12705048.mcts_primal",
         "class": "MCTS",
