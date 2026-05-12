@@ -1,0 +1,12 @@
+{
+    "server_host": "ws6.csie.org",
+    "server_port": 8888,
+    "username": "Azusa",
+    "password": "LaoWang1015@@",
+    "label": "Azusa_MCTSNP_Exp5",
+    "player": {
+        "path": "src.players.b12705048.mcts_card_danger",
+        "class": "MCTS",
+        "args": {}
+    }
+}
