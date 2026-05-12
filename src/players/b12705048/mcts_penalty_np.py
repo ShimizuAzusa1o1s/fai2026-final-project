@@ -24,11 +24,10 @@ class MCTS():
             player_idx: This player's index (0-3) in the game.
         """
         self.player_idx = player_idx
-        self.time_limit = 0.90  # Time limit per decision in seconds
-        self.total_cards = set(range(1, 105))  # All possible cards in the game
+        self.time_limit = 0.90                  # Time limit per decision in seconds
+        self.total_cards = set(range(1, 105))   # All possible cards in the game
         
-        # Pre-compute bullhead lookup table for O(1) penalty lookups
-        # Card penalties: 55 has 7 points, multiples of 11 have 5, etc.
+        # Pre-compute bullhead lookup table for O(1) penalty lookups.
         self.bullhead_lookup = np.zeros(105, dtype=np.int32)
         for card in range(1, 105):
             if card == 55: self.bullhead_lookup[card] = 7           # Special case: 55 is 7 bullheads
@@ -82,16 +81,15 @@ class MCTS():
         T = len(hand)      # Number of turns remaining in the round
         
         # Compress board state into flat arrays for vectorized operations
-        # This avoids Python list overhead in the hot loop
         base_ends = np.zeros(4, dtype=np.int32)      # Last card in each row
         base_lengths = np.zeros(4, dtype=np.int32)   # Number of cards in each row
         base_bulls = np.zeros(4, dtype=np.int32)     # Total bullhead points in each row
         
         # Initialize base board state arrays
         for r, row in enumerate(board):
-            base_ends[r] = row[-1]  # Largest card in row (for comparison logic)
-            base_lengths[r] = len(row)  # Row fills up at 6 cards
-            base_bulls[r] = sum(self.bullhead_lookup[c] for c in row)  # Total penalties if row collected
+            base_ends[r] = row[-1]                                      # Largest card in row (for comparison logic)
+            base_lengths[r] = len(row)                                  # Row fills up at 6 cards
+            base_bulls[r] = sum(self.bullhead_lookup[c] for c in row)   # Total penalties if row collected
             
         # Accumulators for penalty statistics across all simulations
         total_my_penalties = np.zeros(B, dtype=np.float32)  # Sum of my penalties per action
@@ -99,7 +97,7 @@ class MCTS():
         visits = 0  # Total number of MCTS rollouts executed
         
         # Pre-allocate index arrays for vectorized indexing (avoid recomputation)
-        b_idx = np.arange(B)  # Batch indices [0, 1, ..., B-1]
+        b_idx = np.arange(B)        # Batch indices [0, 1, ..., B-1]
         row_indices = np.arange(4)  # Row indices [0, 1, 2, 3]
         
         # Initialize move tracking array for this batch
@@ -109,7 +107,6 @@ class MCTS():
 
         # --- 3. VECTORIZED MCTS SIMULATION LOOP ---
         # This loop runs repeated rollouts, evaluating all actions in parallel
-        # CRITICAL: Both opponent and agent moves are randomized each iteration
         while time.perf_counter() - start_time < self.time_limit:
             
             # Opponent hand determinization: shuffle unseen cards and distribute to 3 opponents
@@ -117,9 +114,7 @@ class MCTS():
             np.random.shuffle(unseen_cards_arr)
             opp_moves = unseen_cards_arr[:3*T].reshape(3, T)  # Shape: (3 opponents, T turns)
 
-            # CRITICAL FIX: Shuffle my future moves for this specific rollout iteration.
-            # This ensures the agent explores different card sequences each simulation,
-            # maintaining true Monte Carlo exploration instead of playing fixed future cards.
+            # Shuffle my future moves for this specific rollout iteration.
             for i in range(B):
                 # Remaining moves: shuffle all cards except the first one
                 rem = [c for c in hand if c != actions[i]]
@@ -154,23 +149,23 @@ class MCTS():
                 # Process cards in play order (smallest to largest)
                 # Each card placement follows the 6 Nimmt rules
                 for i in range(4):
-                    owner = order[:, i]  # Which player (0-3) plays the i-th smallest card
+                    owner = order[:, i]         # Which player (0-3) plays the i-th smallest card
                     card = cards[b_idx, owner]  # The actual card values being played
                     
                     # -- VECTORIZED GAME RULE LOGIC (6 Nimmt) --
                     
                     # Rule 1: Identify valid rows
                     # A row is valid if the card to play is larger than the last card in that row
-                    valid_mask = card[:, None] > row_ends  # Shape: (B, 4)
+                    valid_mask = card[:, None] > row_ends       # Shape: (B, 4)
                     has_valid_row = np.any(valid_mask, axis=1)  # Shape: (B,) - has any valid row?
                     
                     # Rule 2: If valid rows exist, play to the row with highest end card
                     # (closest to my card value) to minimize penalty risk
-                    masked_ends = np.where(valid_mask, row_ends, -1)  # Mask invalid rows
-                    target_row = np.argmax(masked_ends, axis=1)  # Index of max valid row end
+                    masked_ends = np.where(valid_mask, row_ends, -1)    # Mask invalid rows
+                    target_row = np.argmax(masked_ends, axis=1)         # Index of max valid row end
                     
                     # Rule 3: If no valid rows (low card), forced placement
-                    # Tiebreaker priority: min bullheads > min length > min index
+                    # Tiebreaker priority: min-bullheads > min-length > min-index
                     # Composite score combines all criteria for single argmin pass
                     composite_score = row_bullheads * 1000 + row_lengths * 10 + row_indices
                     forced_row = np.argmin(composite_score, axis=1)
@@ -180,15 +175,15 @@ class MCTS():
                     actual_target = np.where(has_valid_row, target_row, forced_row)
                     
                     # Rule 5: Get target row state before placement
-                    card_bulls = self.bullhead_lookup[card]  # Bullheads on this card
+                    card_bulls = self.bullhead_lookup[card]         # Bullheads on this card
                     tr_lengths = row_lengths[b_idx, actual_target]  # Length of target row
                     tr_bulls = row_bullheads[b_idx, actual_target]  # Bullheads in target row
                     
                     # Rule 6: Determine if placement causes penalty
                     # Penalty occurs when: (1) row has 5 cards and card is valid, OR (2) no valid rows
-                    is_6th_card = has_valid_row & (tr_lengths == 5)  # Filling a full row
-                    is_low_card = ~has_valid_row  # Low card forces placement
-                    is_penalty = is_6th_card | is_low_card  # Penalty triggered?
+                    is_6th_card = has_valid_row & (tr_lengths == 5)     # Filling a full row
+                    is_low_card = ~has_valid_row                        # Low card forces placement
+                    is_penalty = is_6th_card | is_low_card              # Penalty triggered?
                     
                     # Get the bullhead penalty amount (only if penalty occurs)
                     penalty_points = np.where(is_penalty, tr_bulls, 0)
@@ -209,15 +204,15 @@ class MCTS():
                     row_ends[b_idx, actual_target] = card  # Update last card in row
                     
             # Accumulate results from this rollout into the statistics
-            total_my_penalties += my_pens  # Update running penalty sum per action
-            total_opp_penalties += opp_pens  # Update opponent penalty totals
-            visits += 1  # Increment number of rollouts completed
+            total_my_penalties += my_pens       # Update running penalty sum per action
+            total_opp_penalties += opp_pens     # Update opponent penalty totals
+            visits += 1                         # Increment number of rollouts completed
 
         # --- 4. FINAL ACTION SELECTION ---
         # Compute average expected penalties for each action
-        safe_visits = max(1, visits)  # Prevent division by zero
-        my_expected = total_my_penalties / safe_visits  # Expected my penalty per action
-        opp_expected = total_opp_penalties / safe_visits  # Expected opponent penalty per action
+        safe_visits = max(1, visits)                        # Prevent division by zero
+        my_expected = total_my_penalties / safe_visits      # Expected my penalty per action
+        opp_expected = total_opp_penalties / safe_visits    # Expected opponent penalty per action
         
         # Scoring strategy depends on current position in the round
         if is_first:
@@ -230,6 +225,6 @@ class MCTS():
             
         # Select action with minimum score (best expected outcome)
         best_idx = np.argmin(final_scores)
-        best_card = int(actions[best_idx])  # Convert to Python int for output
+        best_card = int(actions[best_idx])
         
         return best_card
