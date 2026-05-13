@@ -33,10 +33,10 @@
     ],
     "players": [
         [
-            "src.players.b12705048.mcts_penalty_o2",
-            "MCTS",
+            "src.players.b12705048.mcs_np",
+            "VectorizedMC",
             {},
-            "MCTSO2"
+            "VMCS"
         ]
     ],
     "engine": {
@@ -50,7 +50,7 @@
         "type": "random_partition",
         "duplication_mode": "cycle",
         "num_games_per_player": 100,
-        "num_workers": 10,
+        "num_workers": 4,
         "scoring": {
             "baseline_upper_pct": 0.8,
             "baseline_lower_pct": 0.2,

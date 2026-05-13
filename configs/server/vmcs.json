@@ -1,0 +1,12 @@
+{
+    "server_host": "ws6.csie.org",
+    "server_port": 8888,
+    "username": "Azusa",
+    "password": "LaoWang1015@@",
+    "label": "Azusa_VMCS",
+    "player": {
+        "path": "src.players.b12705048.mcs_np",
+        "class": "VectorizedMC",
+        "args": {}
+    }
+}
