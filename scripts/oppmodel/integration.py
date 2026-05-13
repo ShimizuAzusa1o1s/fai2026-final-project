@@ -57,11 +57,11 @@ class BiasedDeterminizer:
     def _load_model(self, model_path: str, model_type: str) -> nn.Module:
         """Load trained model from disk."""
         if model_type == "fastmlp":
-            model = FastMLP(input_size=520, hidden_size=512)
+            model = FastMLP(input_size=524, hidden_size=512)  # FIXED: 524 dims (504 + 4 scores)
         elif model_type == "lstm":
-            model = LSTMModel(state_size=520, hidden_size=128)
+            model = LSTMModel(state_size=524, hidden_size=128)  # FIXED: 524 dims
         elif model_type == "transformer":
-            model = TransformerModel(state_size=520, hidden_size=256)
+            model = TransformerModel(state_size=524, hidden_size=256)  # FIXED: 524 dims
         else:
             raise ValueError(f"Unknown model type: {model_type}")
         
@@ -76,13 +76,15 @@ class BiasedDeterminizer:
                     board: List[List[int]],
                     history_played: Dict[int, List[int]],
                     my_score: int,
-                    opp_scores: List[int]) -> np.ndarray:
+                    opp_scores: List[int],
+                    discard_pile: List[int],
+                    player_idx: int = 0) -> np.ndarray:
         """
-        Encode observable game state into feature vector (520 dims).
+        Encode observable game state into feature vector (524 dims).
         
         Same encoding as in data generation.
         """
-        features = np.zeros(520, dtype=np.float32)
+        features = np.zeros(524, dtype=np.float32)
         
         # Feature 1: My current hand
         for card in my_hand:
@@ -93,23 +95,26 @@ class BiasedDeterminizer:
             for card in row:
                 features[104 + card - 1] = 1.0
         
-        # Feature 3: Cards I've played
-        if 0 in history_played:  # Assuming we are player 0
-            for card in history_played[0]:
+        # Feature 3: Cards I've played (FIXED: use dynamic player_idx)
+        if player_idx in history_played:
+            for card in history_played[player_idx]:
                 features[208 + card - 1] = 1.0
         
-        # Feature 4: Cards opponents have played
-        for opp_idx in [1, 2, 3]:
+        # Feature 4: Cards opponents have played (FIXED: dynamic opponent indices)
+        for opp_idx in [i for i in range(4) if i != player_idx]:
             if opp_idx in history_played:
                 for card in history_played[opp_idx]:
                     features[312 + card - 1] = 1.0
         
-        # Feature 5: Score context
-        my_normalized_score = min(my_score / 100.0, 1.0)
-        features[516] = my_normalized_score
-        features[517] = np.mean([min(s / 100.0, 1.0) for s in opp_scores])
-        features[518] = np.std([min(s / 100.0, 1.0) for s in opp_scores])
-        features[519] = len(my_hand) / 10.0
+        # Feature 5: Cards in Discard (Taken rows)
+        for card in discard_pile:
+            features[416 + card - 1] = 1.0
+            
+        # Feature 6: Scores and Hand Size (indices 520-523)
+        features[520] = min(my_score / 100.0, 1.0)
+        features[521] = np.mean([min(s / 100.0, 1.0) for s in opp_scores])
+        features[522] = np.std([min(s / 100.0, 1.0) for s in opp_scores])
+        features[523] = len(my_hand) / 10.0
         
         return features
     
@@ -119,19 +124,23 @@ class BiasedDeterminizer:
                                        history_played: Dict[int, List[int]],
                                        my_score: int,
                                        opp_scores: List[int],
-                                       opponent_idx: int) -> np.ndarray:
+                                       discard_pile: List[int],
+                                       player_idx: int = 0,
+                                       opponent_idx: int = 0) -> np.ndarray:
         """
         Get predicted P(opponent_i holds card_j) from the model.
         
         Args:
             my_hand, board, history_played, scores: Observable game state
+            discard_pile: Cards taken as penalties
+            player_idx: Which player we are (0-3)
             opponent_idx: Which opponent (0, 1, or 2 relative to our perspective)
             
         Returns:
             np.ndarray of shape (104,) with probabilities for each card
         """
-        # Encode state
-        features = self.encode_state(my_hand, board, history_played, my_score, opp_scores)
+        # Encode state with correct player perspective
+        features = self.encode_state(my_hand, board, history_played, my_score, opp_scores, discard_pile, player_idx)
         
         # Convert to tensor
         features_tensor = torch.from_numpy(features).unsqueeze(0).to(self.device)
@@ -151,19 +160,26 @@ class BiasedDeterminizer:
                              history_played: Dict[int, List[int]],
                              my_score: int,
                              opp_scores: List[int],
-                             n_turns: int,
+                             discard_pile: List[int],
+                             player_idx: int = 0,
+                             n_turns: int = None,
                              n_determinizations: int = 100) -> np.ndarray:
         """
         Generate N determinizations of opponent hands using model predictions.
         
         Args:
             Observable game state
-            n_turns: Number of cards each opponent should hold
+            discard_pile: Cards taken as penalties
+            player_idx: Which player we are (0-3)
+            n_turns: Number of cards each opponent should hold (default: len(my_hand))
             n_determinizations: How many different hands to sample (default: 100)
             
         Returns:
             np.ndarray of shape (3, n_determinizations, n_turns) with sampled opponent hands
         """
+        if n_turns is None:
+            n_turns = len(my_hand)
+        
         all_cards = set(range(1, 105))
         visible_cards = set(my_hand)
         for row in board:
@@ -180,9 +196,9 @@ class BiasedDeterminizer:
             remaining_unseen = unseen_cards.copy()
             
             for opp_relative_idx in range(3):
-                # Get model's predicted probabilities for this opponent
+                # Get model's predicted probabilities for this opponent (FIXED: pass all required params)
                 probs = self.get_opponent_hand_probabilities(
-                    my_hand, board, history_played, my_score, opp_scores, opp_relative_idx
+                    my_hand, board, history_played, my_score, opp_scores, discard_pile, player_idx, opp_relative_idx
                 )
                 
                 # Mask out already-visible cards

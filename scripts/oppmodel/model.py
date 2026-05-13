@@ -19,11 +19,11 @@ class FastMLP(nn.Module):
     """
     Fast MLP for opponent hand prediction.
     
-    Input: Observable state (520 features)
+    Input: Observable state (524 features = 5x104 cards + 4 scores)
     Output: Probability distribution over 104 cards for opponent's hand
     
     Architecture:
-    - Input: 520
+    - Input: 524
     - Hidden 1: 512 (ReLU + Dropout)
     - Hidden 2: 256 (ReLU + Dropout)
     - Hidden 3: 128 (ReLU + Dropout)
@@ -32,7 +32,7 @@ class FastMLP(nn.Module):
     Inference time: ~1-2ms (CPU)
     """
     
-    def __init__(self, input_size: int = 520, hidden_size: int = 512):
+    def __init__(self, input_size: int = 524, hidden_size: int = 512):
         super(FastMLP, self).__init__()
         
         self.fc1 = nn.Linear(input_size, hidden_size)
@@ -47,7 +47,7 @@ class FastMLP(nn.Module):
         Forward pass.
         
         Args:
-            x: Batch of observable states, shape (batch_size, 520)
+            x: Batch of observable states, shape (batch_size, 524)
             
         Returns:
             Predicted hand probabilities, shape (batch_size, 104)
@@ -84,7 +84,7 @@ class LSTMModel(nn.Module):
     Note: This is slower but can be more accurate if card play history matters.
     """
     
-    def __init__(self, state_size: int = 520, hidden_size: int = 128, num_layers: int = 2):
+    def __init__(self, state_size: int = 524, hidden_size: int = 128, num_layers: int = 2):
         super(LSTMModel, self).__init__()
         
         self.lstm = nn.LSTM(
@@ -174,7 +174,7 @@ class TransformerModel(nn.Module):
         Forward pass for Transformer.
         
         Args:
-            x: Sequence of states, shape (batch_size, seq_len, 520)
+            x: Sequence of states, shape (batch_size, seq_len, 524)
             
         Returns:
             Hand probability, shape (batch_size, 104)
@@ -227,21 +227,21 @@ if __name__ == "__main__":
     
     # FastMLP
     model = FastMLP()
-    x = torch.randn(32, 520)
+    x = torch.randn(32, 524)  # 524-dim feature vector
     y = model(x)
     print(f"✓ FastMLP: input {x.shape} -> output {y.shape}")
     print(f"  Params: {sum(p.numel() for p in model.parameters()):,}")
     
     # LSTM
     model = LSTMModel()
-    x = torch.randn(32, 10, 520)  # 10 time steps
+    x = torch.randn(32, 10, 524)  # 10 time steps, 524 dims
     y = model(x)
     print(f"✓ LSTMModel: input {x.shape} -> output {y.shape}")
     print(f"  Params: {sum(p.numel() for p in model.parameters()):,}")
     
     # Transformer
     model = TransformerModel()
-    x = torch.randn(32, 10, 520)  # 10 time steps
+    x = torch.randn(32, 10, 524)  # 10 time steps, 524 dims
     y = model(x)
     print(f"✓ TransformerModel: input {x.shape} -> output {y.shape}")
     print(f"  Params: {sum(p.numel() for p in model.parameters()):,}")

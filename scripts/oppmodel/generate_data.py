@@ -60,7 +60,8 @@ class OpponentHandDataLogger:
                 board: List[List[int]],
                 history_played: Dict[int, List[int]],
                 my_score: int,
-                opp_scores: List[int]):
+                opp_scores: List[int],
+                discard_pile: List[int]):
         """
         Log one turn's observable state and opponent hands.
         
@@ -72,9 +73,10 @@ class OpponentHandDataLogger:
             history_played: Dict {player_idx -> [cards played so far]}
             my_score: My current penalty score
             opp_scores: Opponent penalty scores
+            discard_pile: Cards that have been taken (dead cards)
         """
         # Build observable feature vector (all 104 cards)
-        features = self._encode_state(player_idx, my_hand, board, history_played, my_score, opp_scores)
+        features = self._encode_state(player_idx, my_hand, board, history_played, my_score, opp_scores, discard_pile)
         
         # Build target labels for each opponent
         for opp_idx in [i for i in range(4) if i != player_idx]:
@@ -86,7 +88,8 @@ class OpponentHandDataLogger:
                 'my_score': my_score,
                 'opp_score': opp_scores[opp_idx],
                 'hand_size': len(opponent_hands[opp_idx]),
-                'board_state': str([len(row) for row in board])
+                'board_state': str([len(row) for row in board]),
+                'discard_pile': discard_pile
             }
             
             self.states.append(features)
@@ -99,21 +102,23 @@ class OpponentHandDataLogger:
                      board: List[List[int]],
                      history_played: Dict[int, List[int]],
                      my_score: int,
-                     opp_scores: List[int]) -> np.ndarray:
+                     opp_scores: List[int],
+                     discard_pile: List[int]) -> np.ndarray:
         """
         Encode observable game state into a feature vector.
         
-        Feature vector (size 104 × 5 = 520 elements):
+        Feature vector (size 524 elements):
         - [0:104]: One-hot: cards in my hand
         - [104:208]: One-hot: cards currently on board
         - [208:312]: One-hot: cards I've already played
         - [312:416]: One-hot: cards opponents have played (aggregated)
         - [416:520]: One-hot: cards in discard (taken rows)
+        - [520:524]: Normalized scores (my_score, mean_opp_score, std_opp_score, hand_size)
         
         Returns:
-            np.ndarray of shape (520,)
+            np.ndarray of shape (524,)
         """
-        features = np.zeros(520, dtype=np.float32)
+        features = np.zeros(524, dtype=np.float32)
         
         # Feature 1: My current hand
         for card in my_hand:
@@ -137,13 +142,15 @@ class OpponentHandDataLogger:
                 for card in history_played[opp_idx]:
                     features[312 + card - 1] = 1.0
         
-        # Feature 5: Additional context (can be normalized if needed)
-        # Using the remaining features for score ratio
-        my_normalized_score = min(my_score / 100.0, 1.0)  # Cap at 1.0
-        features[516] = my_normalized_score
-        features[517] = np.mean([min(s / 100.0, 1.0) for s in opp_scores])
-        features[518] = np.std([min(s / 100.0, 1.0) for s in opp_scores])
-        features[519] = len(my_hand) / 10.0  # Normalized hand size
+        # Feature 5: Cards in Discard (Taken rows)
+        for card in discard_pile:
+            features[416 + card - 1] = 1.0
+            
+        # Feature 6: Scores and Hand Size (indices 520-523)
+        features[520] = min(my_score / 100.0, 1.0)
+        features[521] = np.mean([min(s / 100.0, 1.0) for s in opp_scores])
+        features[522] = np.std([min(s / 100.0, 1.0) for s in opp_scores])
+        features[523] = len(my_hand) / 10.0
         
         return features
     
@@ -230,46 +237,60 @@ class SelfPlayGameLogger:
         return total_turns_logged
     
     def _play_and_log_game(self, engine: Engine) -> int:
-        """
-        Play one game, logging observable state and opponent hands.
-        
-        Returns:
-            Number of turns logged this game
-        """
         turns_logged = 0
         
-        # Play all rounds
-        for round_idx in range(engine.n_rounds):
-            # At start of each round, log the state for all 4 players
-            # (each sees their own hand, opponents' hands are unknown to them)
+        # Active game loop: play round by round
+        while engine.round < engine.n_rounds:
+            # 1. Capture observable state BEFORE the round resolves
             
-            # Build history of played cards
-            history_played = {i: [] for i in range(4)}
+            # Build history_played dict: player_idx -> [cards they've played so far]
+            history_played = {}
+            for player_idx in range(4):
+                history_played[player_idx] = []
+                # Collect all cards this player has played in previous rounds
+                for round_idx in range(engine.round):
+                    card_played = engine.history_matrix[round_idx][player_idx]
+                    if card_played > 0:
+                        history_played[player_idx].append(card_played)
             
-            # Play all turns in this round (10 cards per hand)
-            for turn_idx in range(engine.hands[0].__len__() if engine.hands else 10):
-                # For each player, log what they can observe
-                for player_idx in range(4):
-                    # Get this player's observable state
-                    my_hand = engine.hands[player_idx][:len(engine.hands[player_idx]) - turn_idx]
-                    
-                    # Build opponent hands dict (what they actually hold, not what we predict)
-                    opponent_hands = {}
-                    for opp_idx in [i for i in range(4) if i != player_idx]:
-                        opponent_hands[opp_idx] = engine.hands[opp_idx][turn_idx:len(engine.hands[opp_idx])]
-                    
-                    # Log this observation
-                    self.data_logger.log_turn(
-                        player_idx=player_idx,
-                        my_hand=my_hand,
-                        opponent_hands=opponent_hands,
-                        board=engine.board,
-                        history_played=history_played,
-                        my_score=engine.scores[player_idx],
-                        opp_scores=engine.scores
-                    )
-                    turns_logged += 1
-        
+            # Compute discard_pile: cards that were played but are not on board
+            discard_pile = []
+            all_played_cards = set()
+            for round_actions in engine.history_matrix:
+                for card in round_actions:
+                    if card > 0:
+                        all_played_cards.add(card)
+            
+            # Cards on board
+            board_cards = set()
+            for row in engine.board:
+                for card in row:
+                    board_cards.add(card)
+            
+            # Discard = played but not on board
+            discard_pile = list(all_played_cards - board_cards)
+            
+            # For each player, log their perspective before this round
+            for player_idx in range(4):
+                my_hand = engine.hands[player_idx]
+                opponent_hands = {i: engine.hands[i] for i in range(4) if i != player_idx}
+                
+                self.data_logger.log_turn(
+                    player_idx=player_idx,
+                    my_hand=my_hand,
+                    opponent_hands=opponent_hands,
+                    board=engine.board,
+                    history_played=history_played,
+                    my_score=engine.scores[player_idx],
+                    opp_scores=engine.scores,
+                    discard_pile=discard_pile
+                )
+                turns_logged += 1
+                
+            # 2. Advance the game state (play one round)
+            engine.play_round()
+            engine.round += 1
+            
         return turns_logged
     
     def save_dataset(self, filename: str = "oppmodel_data.pt") -> Path:
