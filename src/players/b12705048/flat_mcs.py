@@ -22,7 +22,7 @@ class FlatMC:
     def __init__(self, player_idx):
         """Initialize the Flat Monte Carlo player."""
         self.player_idx = player_idx
-        self.time_limit = 0.90                  # Time limit per decision
+        self.time_limit = 0.90
         self.total_cards = set(range(1, 105))
         
         # Pre-compute bullhead lookup table for fast O(1) lookups
@@ -59,16 +59,12 @@ class FlatMC:
                     
         unseen_cards = list(self.total_cards - visible_cards - set(hand))
         n_turns = len(hand)
-        
-        # Track statistics for each candidate card in our hand
         stats = {c: {"penalty": 0.0, "visits": 0} for c in hand}
-        
-        # Absolute indices of the 3 opponents
         opp_indices = [i for i in range(4) if i != self.player_idx]
         
         # --- 2. Pure Monte Carlo Loop ---
         while time.perf_counter() - start_time < self.time_limit:
-            # Determinize: Randomly distribute unseen cards to opponents
+            # Randomly distribute unseen cards to opponents
             shuffled = unseen_cards.copy()
             random.shuffle(shuffled)
             
@@ -80,7 +76,6 @@ class FlatMC:
             
             # Evaluate every card in our hand against this specific determinization
             for candidate in hand:
-                # Create a fresh simulation state
                 state = {
                     'board': [row[:] for row in board],
                     'my_hand': [c for c in hand if c != candidate],
