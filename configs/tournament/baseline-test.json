@@ -33,10 +33,10 @@
     ],
     "players": [
         [
-            "src.players.b12705048.mcs_np",
-            "VectorizedMC",
+            "src.players.b12705048.flat_mc",
+            "FlatMC",
             {},
-            "VMCS"
+            "FlatMC"
         ]
     ],
     "engine": {
