@@ -40,9 +40,10 @@ class ReplayBuffer:
         with open(path, 'rb') as f:
             self.data = pickle.load(f)
 
-def get_strategy(regret_net, state_tensor, hand):
+def get_strategy(regret_net, state_tensor, hand, device):
     with torch.no_grad():
-        regrets = regret_net(state_tensor.unsqueeze(0)).squeeze(0)
+        # Move tensor to correct device for inference, then move output back to CPU
+        regrets = regret_net(state_tensor.unsqueeze(0).to(device)).squeeze(0).cpu()
     
     strategy = torch.zeros(104)
     positive_regret_sum = 0.0
@@ -95,8 +96,9 @@ def resolve_trick(board, row_bullheads, pending_actions, penalties):
             row_bullheads[target_row] = BULLHEADS[card]
 
 class MCCFR_Traverser:
-    def __init__(self, regret_net):
+    def __init__(self, regret_net, device):
         self.regret_net = regret_net
+        self.device = device
         self.regret_buffer = ReplayBuffer(capacity=50000)
         self.policy_buffer = ReplayBuffer(capacity=50000)
         self.exploration_prob = 0.1
@@ -106,7 +108,7 @@ class MCCFR_Traverser:
             return sum(BULLHEADS[c] for c in hand)
             
         state_tensor = StateEncoder.encode(hand, board)
-        strategy = get_strategy(self.regret_net, state_tensor, hand)
+        strategy = get_strategy(self.regret_net, state_tensor, hand, self.device)
         
         opp_actions = []
         for i in range(4):
@@ -117,7 +119,7 @@ class MCCFR_Traverser:
                     action = random.choice(opp_hand)
                 else:
                     opp_state = StateEncoder.encode(opp_hand, board) 
-                    opp_strat = get_strategy(self.regret_net, opp_state, opp_hand)
+                    opp_strat = get_strategy(self.regret_net, opp_state, opp_hand, self.device)
                     probs = [opp_strat[c-1].item() for c in opp_hand]
                     action = random.choices(opp_hand, weights=probs, k=1)[0]
                     
@@ -154,22 +156,29 @@ class MCCFR_Traverser:
         for action in hand:
             regrets[action - 1] = expected_value - action_values[action]
             
+        # We always keep buffers on CPU to prevent VRAM overflow
         self.regret_buffer.add(state_tensor, regrets)
         self.policy_buffer.add(state_tensor, strategy)
         
         return expected_value
 
 def generate_data(num_games=1000, data_dir="results/deep_cfr"):
-    regret_net = RegretNet() 
+    # Dynamically select GPU or CPU
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Data Generator using device: {device}")
+    
+    regret_net = RegretNet().to(device)
     weight_path = "src/players/b12705048/weights/regret_net.pt"
+    
     if os.path.exists(weight_path):
-        regret_net.load_state_dict(torch.load(weight_path))
+        # Use map_location to ensure compatibility if weights were saved on a different architecture
+        regret_net.load_state_dict(torch.load(weight_path, map_location=device))
         regret_net.eval()
         print(f"Loaded trained Regret Network for data generation.")
     else:
         print("Using untrained Regret Network (first iteration).")
         
-    traverser = MCCFR_Traverser(regret_net)
+    traverser = MCCFR_Traverser(regret_net, device)
     
     print(f"Generating Deep CFR data for {num_games} games using External Sampling...")
     
@@ -187,7 +196,6 @@ def generate_data(num_games=1000, data_dir="results/deep_cfr"):
         
         traverser.traverse(hand, opp_hands, board, row_bullheads, player_idx, depth=0, max_depth=5)
         
-    # Save Buffers to configured data directory
     os.makedirs(data_dir, exist_ok=True)
     regret_path = os.path.join(data_dir, "regret_buffer.pkl")
     policy_path = os.path.join(data_dir, "policy_buffer.pkl")
