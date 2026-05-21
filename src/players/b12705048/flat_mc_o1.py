@@ -85,17 +85,40 @@ class FlatMCO1:
         # N=2500 is a good baseline, but scale down if C is very large
         N = max(100, 20000 // C) 
         
+        # --- Pre-allocate buffers for simulation ---
+        tails_buf = np.empty((C, N, 4), dtype=np.int32)
+        lengths_buf = np.empty((C, N, 4), dtype=np.int32)
+        bullheads_buf = np.empty((C, N, 4), dtype=np.int32)
+        penalties_buf = np.empty((C, N, 4), dtype=np.int32)
+        
+        plays_buf = np.empty((C, N, 4), dtype=np.int32)
+        diff_buf = np.empty((C, N, 4), dtype=np.int32)
+        score_buf = np.empty((C, N, 4), dtype=np.int32)
+        
+        base_tails_b = np.broadcast_to(base_tails, (C, N, 4))
+        base_lengths_b = np.broadcast_to(base_lengths, (C, N, 4))
+        base_bullheads_b = np.broadcast_to(base_bullheads, (C, N, 4))
+        
+        # Pre-expand my_rem for fast random selection
+        my_rem_expanded = np.expand_dims(my_rem, axis=1) # (C, 1, T-1)
+        my_rem_broadcasted = np.broadcast_to(my_rem_expanded, (C, N, n_turns - 1))
+        
         while time.perf_counter() - start_time < self.time_limit - 0.05:
-            # Broadcast base state to (C, N, 4)
-            tails = np.tile(base_tails, (C, N, 1))
-            lengths = np.tile(base_lengths, (C, N, 1))
-            bullheads = np.tile(base_bullheads, (C, N, 1))
-            penalties = np.zeros((C, N, 4), dtype=np.int32)
+            # Re-initialize state buffers from base
+            tails_buf[:] = base_tails_b
+            lengths_buf[:] = base_lengths_b
+            bullheads_buf[:] = base_bullheads_b
+            penalties_buf.fill(0)
             
             # --- Generate Hands ---
-            # Opponents' hands
+            # Opponents' hands: optimize drawing 3*T cards
             noise = self.rng.random((N, n_unseen))
-            perm_indices = noise.argsort(axis=1)
+            req_cards = 3 * n_turns
+            if req_cards < n_unseen:
+                perm_indices = np.argpartition(noise, req_cards - 1, axis=1)[:, :req_cards]
+            else:
+                perm_indices = noise.argsort(axis=1)
+                
             opp0_cards = unseen[perm_indices[:, 0:n_turns]] # (N, T)
             opp1_cards = unseen[perm_indices[:, n_turns:2*n_turns]] # (N, T)
             opp2_cards = unseen[perm_indices[:, 2*n_turns:3*n_turns]] # (N, T)
@@ -103,71 +126,74 @@ class FlatMCO1:
             # Agent's remaining cards (per candidate)
             my_noise = self.rng.random((C, N, n_turns - 1))
             my_perm = my_noise.argsort(axis=2)
-            my_rem_expanded = np.expand_dims(my_rem, axis=1) # (C, 1, T-1)
-            my_cards = np.take_along_axis(np.broadcast_to(my_rem_expanded, (C, N, n_turns-1)), my_perm, axis=2) # (C, N, T-1)
+            my_cards = np.take_along_axis(my_rem_broadcasted, my_perm, axis=2) # (C, N, T-1)
             
             # --- Vectorized Play ---
-            plays = np.zeros((C, N, 4), dtype=np.int32)
-            
             for t in range(n_turns):
                 if t == 0:
-                    p_agent = np.broadcast_to(hand_array, (C, N))
+                    plays_buf[:, :, self.player_idx] = np.broadcast_to(hand_array, (C, N))
                 else:
-                    p_agent = my_cards[:, :, t-1]
+                    plays_buf[:, :, self.player_idx] = my_cards[:, :, t-1]
                 
-                p_opp0 = np.broadcast_to(opp0_cards[:, t], (C, N))
-                p_opp1 = np.broadcast_to(opp1_cards[:, t], (C, N))
-                p_opp2 = np.broadcast_to(opp2_cards[:, t], (C, N))
+                plays_buf[:, :, opp_indices[0]] = np.broadcast_to(opp0_cards[:, t], (C, N))
+                plays_buf[:, :, opp_indices[1]] = np.broadcast_to(opp1_cards[:, t], (C, N))
+                plays_buf[:, :, opp_indices[2]] = np.broadcast_to(opp2_cards[:, t], (C, N))
                 
-                plays[:, :, self.player_idx] = p_agent
-                plays[:, :, opp_indices[0]] = p_opp0
-                plays[:, :, opp_indices[1]] = p_opp1
-                plays[:, :, opp_indices[2]] = p_opp2
-                
-                order = np.argsort(plays, axis=2)
-                sorted_plays = np.take_along_axis(plays, order, axis=2)
+                order = np.argsort(plays_buf, axis=2)
+                sorted_plays = np.take_along_axis(plays_buf, order, axis=2)
                 
                 for i in range(4):
                     c = sorted_plays[:, :, i]
                     p = order[:, :, i]
                     
-                    valid_mask = c[:, :, None] > tails
-                    diff = c[:, :, None] - tails
-                    diff = np.where(valid_mask, diff, 1000)
+                    c_exp = c[:, :, None]
                     
-                    target_row = np.argmin(diff, axis=2)
-                    min_diff = np.min(diff, axis=2)
+                    # Compute difference in-place
+                    np.subtract(c_exp, tails_buf, out=diff_buf)
+                    
+                    # Mask invalid placements
+                    np.where(diff_buf > 0, diff_buf, 1000, out=diff_buf)
+                    
+                    target_row = np.argmin(diff_buf, axis=2)
+                    min_diff = np.min(diff_buf, axis=2)
                     
                     invalid_placement = min_diff == 1000
                     
-                    score = bullheads * 1000 + lengths * 10 + np.arange(4)
-                    alt_target_row = np.argmin(score, axis=2)
+                    # Optimization: Only compute fallback score if there's any invalid placement
+                    if np.any(invalid_placement):
+                        np.multiply(bullheads_buf, 1000, out=score_buf)
+                        score_buf += lengths_buf * 10
+                        score_buf += np.arange(4, dtype=np.int32)
+                        
+                        alt_target_row = np.argmin(score_buf, axis=2)
+                        final_target_row = np.where(invalid_placement, alt_target_row, target_row)
+                    else:
+                        final_target_row = target_row
+                        
+                    final_idx = final_target_row[:, :, None]
                     
-                    final_target_row = np.where(invalid_placement, alt_target_row, target_row)
-                    
-                    row_len = np.take_along_axis(lengths, final_target_row[:, :, None], axis=2).squeeze(-1)
+                    row_len = np.take_along_axis(lengths_buf, final_idx, axis=2).squeeze(-1)
                     take_row = (row_len == 5) | invalid_placement
                     
-                    row_bh = np.take_along_axis(bullheads, final_target_row[:, :, None], axis=2).squeeze(-1)
+                    row_bh = np.take_along_axis(bullheads_buf, final_idx, axis=2).squeeze(-1)
                     penalty_to_add = np.where(take_row, row_bh, 0)
                     
-                    # Accumulate penalties
-                    for player_idx in range(4):
-                        mask = (p == player_idx)
-                        penalties[:, :, player_idx] += np.where(mask, penalty_to_add, 0)
+                    # Accumulate penalties directly to the player who played the card
+                    p_exp = p[:, :, None]
+                    curr_pen = np.take_along_axis(penalties_buf, p_exp, axis=2)
+                    np.put_along_axis(penalties_buf, p_exp, curr_pen + penalty_to_add[:, :, None], axis=2)
                         
-                    # Update board
+                    # Update board state
                     c_bh = self.bullhead_lookup_array[c]
-                    
-                    np.put_along_axis(tails, final_target_row[:, :, None], c[:, :, None], axis=2)
+                    np.put_along_axis(tails_buf, final_idx, c_exp, axis=2)
                     
                     new_len = np.where(take_row, 1, row_len + 1)
                     new_bh_val = np.where(take_row, c_bh, row_bh + c_bh)
                     
-                    np.put_along_axis(lengths, final_target_row[:, :, None], new_len[:, :, None], axis=2)
-                    np.put_along_axis(bullheads, final_target_row[:, :, None], new_bh_val[:, :, None], axis=2)
+                    np.put_along_axis(lengths_buf, final_idx, new_len[:, :, None], axis=2)
+                    np.put_along_axis(bullheads_buf, final_idx, new_bh_val[:, :, None], axis=2)
                     
-            stats_penalty += penalties[:, :, self.player_idx].sum(axis=1)
+            stats_penalty += penalties_buf[:, :, self.player_idx].sum(axis=1)
             stats_visits += N
             
         best_idx = np.argmin(stats_penalty / np.maximum(1, stats_visits))
