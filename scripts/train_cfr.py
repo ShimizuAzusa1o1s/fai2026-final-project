@@ -109,7 +109,7 @@ def full_deep_cfr_loop(external_iterations=5, games_per_iter=500, data_dir="resu
             save_path="src/players/b12705048/weights/regret_net.pt",
             epochs=10,
             batch_size=64,
-            lr=1e-3
+            lr=1e-4
         )
         
         # 3. Train PolicyNet
@@ -120,7 +120,7 @@ def full_deep_cfr_loop(external_iterations=5, games_per_iter=500, data_dir="resu
             save_path="src/players/b12705048/weights/policy_net.pt",
             epochs=10,
             batch_size=64,
-            lr=1e-3
+            lr=1e-4
         )
 
 if __name__ == '__main__':

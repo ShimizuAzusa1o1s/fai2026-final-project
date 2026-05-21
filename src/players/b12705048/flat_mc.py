@@ -18,7 +18,7 @@ class FlatMC:
     def __init__(self, player_idx):
         """Initialize the Flat Monte Carlo player."""
         self.player_idx = player_idx
-        self.time_limit = 0.90
+        self.time_limit = 0.95
         self.total_cards = set(range(1, 105))
         
         # Pre-compute bullhead lookup table for fast O(1) lookups
