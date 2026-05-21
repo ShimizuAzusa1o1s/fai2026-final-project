@@ -83,7 +83,7 @@ class FlatMCO1:
         
         # Determine batch size dynamically based on candidates, limit Memory overhead.
         # N=2500 is a good baseline, but scale down if C is very large
-        N = max(100, 20000 // C) 
+        N = max(100, 15000 // C) 
         
         # --- Pre-allocate buffers for simulation ---
         tails_buf = np.empty((C, N, 4), dtype=np.int32)
@@ -152,7 +152,7 @@ class FlatMCO1:
                     np.subtract(c_exp, tails_buf, out=diff_buf)
                     
                     # Mask invalid placements
-                    np.where(diff_buf > 0, diff_buf, 1000, out=diff_buf)
+                    diff_buf[diff_buf <= 0] = 1000
                     
                     target_row = np.argmin(diff_buf, axis=2)
                     min_diff = np.min(diff_buf, axis=2)

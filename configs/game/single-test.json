@@ -1,13 +1,25 @@
 {
     "players": [
-        ["src.players.TA.random_player", "RandomPlayer"],
-        ["src.players.TA.random_player", "RandomPlayer", {}],
-        ["src.players.TA.random_player", "RandomPlayer", {}, "label"],
+        [
+            "src.players.TA.random_player",
+            "RandomPlayer"
+        ],
+        [
+            "src.players.TA.random_player",
+            "RandomPlayer",
+            {}
+        ],
+        [
+            "src.players.TA.random_player",
+            "RandomPlayer",
+            {},
+            "label"
+        ],
         {
-            "path": "src.players.b12705048.ismcts",
-            "class": "ISMCTS",
+            "path": "src.players.b12705048.flat_mc_o1",
+            "class": "FlatMCO1",
             "args": {},
-            "label": "ISMCTS"
+            "label": "FlatMCO1"
         }
     ],
     "engine": {
