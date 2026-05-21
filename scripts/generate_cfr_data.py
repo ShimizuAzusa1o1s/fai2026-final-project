@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 # Ensure ./src can be imported
 sys.path.append(os.getcwd())
-from src.players.b12705048.deep_cfr_net import StateEncoder, RegretNet, PolicyNet
+from src.players.b12705048.deep_cfr_net import StateEncoder, RegretNet, PolicyNet, INPUT_DIM
 
 # Pre-compute bullhead values
 BULLHEADS = [0] * 105
@@ -23,14 +23,19 @@ for c in range(1, 105):
 BULLHEADS = tuple(BULLHEADS)
 
 class ReplayBuffer:
-    def __init__(self, capacity=100000):
+    """O(1) ring buffer for storing (state, target, mask) triples."""
+    def __init__(self, capacity=200000):
         self.capacity = capacity
         self.data = []
+        self.pos = 0
         
-    def add(self, state, target):
-        if len(self.data) >= self.capacity:
-            self.data.pop(0) 
-        self.data.append((state, target))
+    def add(self, state, target, mask):
+        entry = (state, target, mask)
+        if len(self.data) < self.capacity:
+            self.data.append(entry)
+        else:
+            self.data[self.pos] = entry
+        self.pos = (self.pos + 1) % self.capacity
         
     def save(self, path):
         with open(path, 'wb') as f:
@@ -39,6 +44,7 @@ class ReplayBuffer:
     def load(self, path):
         with open(path, 'rb') as f:
             self.data = pickle.load(f)
+        self.pos = len(self.data) % self.capacity
 
 def get_strategy(regret_net, state_tensor, hand, device):
     with torch.no_grad():
@@ -95,19 +101,66 @@ def resolve_trick(board, row_bullheads, pending_actions, penalties):
             board[target_row] = [card]
             row_bullheads[target_row] = BULLHEADS[card]
 
+
+def terminal_estimate(hand, board, row_bullheads):
+    """
+    Estimate future penalty via greedy single-player simulation.
+    Much better than the naive sum(BULLHEADS[c] for c in hand) which
+    assumes every remaining card causes a penalty.
+    """
+    if not hand:
+        return 0.0
+        
+    penalty = 0.0
+    sim_tails = [row[-1] for row in board]
+    sim_lengths = [len(row) for row in board]
+    sim_bh = row_bullheads[:]
+    
+    for c in sorted(hand):
+        # Find target row (same logic as game engine)
+        target = -1
+        min_gap = 105
+        for r in range(4):
+            gap = c - sim_tails[r]
+            if 0 < gap < min_gap:
+                min_gap = gap
+                target = r
+        
+        if target == -1:
+            # Low card: forced to take cheapest row
+            cheapest = min(range(4), key=lambda r: (sim_bh[r], sim_lengths[r], r))
+            penalty += sim_bh[cheapest]
+            sim_tails[cheapest] = c
+            sim_lengths[cheapest] = 1
+            sim_bh[cheapest] = BULLHEADS[c]
+        elif sim_lengths[target] >= 5:
+            # 6th card rule: take the row
+            penalty += sim_bh[target]
+            sim_tails[target] = c
+            sim_lengths[target] = 1
+            sim_bh[target] = BULLHEADS[c]
+        else:
+            sim_tails[target] = c
+            sim_lengths[target] += 1
+            sim_bh[target] += BULLHEADS[c]
+    
+    return penalty
+
+
 class MCCFR_Traverser:
     def __init__(self, regret_net, device):
         self.regret_net = regret_net
         self.device = device
-        self.regret_buffer = ReplayBuffer(capacity=50000)
-        self.policy_buffer = ReplayBuffer(capacity=50000)
+        self.regret_buffer = ReplayBuffer(capacity=200000)
+        self.policy_buffer = ReplayBuffer(capacity=200000)
         self.exploration_prob = 0.1
         
     def traverse(self, hand, opp_hands, board, row_bullheads, player_idx, depth=0, max_depth=5):
         if not hand or depth >= max_depth:
-            return sum(BULLHEADS[c] for c in hand)
+            return terminal_estimate(hand, board, row_bullheads)
             
-        state_tensor = StateEncoder.encode(hand, board)
+        state_tensor = StateEncoder.encode(hand, board, round_num=depth)
+        legal_mask = StateEncoder.get_legal_mask(hand)
         strategy = get_strategy(self.regret_net, state_tensor, hand, self.device)
         
         opp_actions = []
@@ -118,7 +171,7 @@ class MCCFR_Traverser:
                 if random.random() < self.exploration_prob:
                     action = random.choice(opp_hand)
                 else:
-                    opp_state = StateEncoder.encode(opp_hand, board) 
+                    opp_state = StateEncoder.encode(opp_hand, board, round_num=depth) 
                     opp_strat = get_strategy(self.regret_net, opp_state, opp_hand, self.device)
                     probs = [opp_strat[c-1].item() for c in opp_hand]
                     action = random.choices(opp_hand, weights=probs, k=1)[0]
@@ -156,9 +209,9 @@ class MCCFR_Traverser:
         for action in hand:
             regrets[action - 1] = expected_value - action_values[action]
             
-        # We always keep buffers on CPU to prevent VRAM overflow
-        self.regret_buffer.add(state_tensor, regrets)
-        self.policy_buffer.add(state_tensor, strategy)
+        # Store (state, target, mask) triples — always on CPU
+        self.regret_buffer.add(state_tensor, regrets, legal_mask)
+        self.policy_buffer.add(state_tensor, strategy, legal_mask)
         
         return expected_value
 
@@ -171,10 +224,12 @@ def generate_data(num_games=1000, data_dir="results/deep_cfr"):
     weight_path = "src/players/b12705048/weights/regret_net.pt"
     
     if os.path.exists(weight_path):
-        # Use map_location to ensure compatibility if weights were saved on a different architecture
-        regret_net.load_state_dict(torch.load(weight_path, map_location=device))
-        regret_net.eval()
-        print(f"Loaded trained Regret Network for data generation.")
+        try:
+            regret_net.load_state_dict(torch.load(weight_path, map_location=device))
+            regret_net.eval()
+            print(f"Loaded trained Regret Network for data generation.")
+        except RuntimeError as e:
+            print(f"[Warning] Incompatible weights at {weight_path}, starting fresh: {e}")
     else:
         print("Using untrained Regret Network (first iteration).")
         
