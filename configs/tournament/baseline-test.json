@@ -33,10 +33,10 @@
     ],
     "players": [
         [
-            "src.players.b12705048.flat_mc_o1",
-            "FlatMCO1",
+            "src.players.b12705048.deep_cfr_player",
+            "DeepCFR",
             {},
-            "FlatMCO1"
+            "DeepCFR"
         ]
     ],
     "engine": {
@@ -49,7 +49,7 @@
     "tournament": {
         "type": "random_partition",
         "duplication_mode": "cycle",
-        "num_games_per_player": 100,
+        "num_games_per_player": 500,
         "num_workers": 4,
         "scoring": {
             "baseline_upper_pct": 0.8,
