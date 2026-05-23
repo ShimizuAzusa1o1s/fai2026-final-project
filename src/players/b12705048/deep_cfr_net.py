@@ -5,7 +5,7 @@ This module defines the core components of a Deep Counterfactual Regret
 Minimization (Deep CFR) agent for the card game 6 Nimmt!:
 
     1. StateEncoder  — Converts raw game state (hand, board, round, history)
-                       into a compact 140-dimensional feature tensor designed
+                       into a compact 151-dimensional feature tensor designed
                        to capture game-theoretic structure.
     2. RegretNet     — Predicts counterfactual regret values for each possible
                        card action (used during MCCFR data generation).
@@ -16,8 +16,8 @@ Architecture Notes:
     - Both networks share the same topology: a 3-layer MLP with LayerNorm
       after each hidden layer, differing only in their training targets
       (regret values vs. strategy probabilities).
-    - Input dimension is 140 (from the StateEncoder), output is 104 (one
-      logit per possible card value 1–104).
+    - Input dimension is 151 (from the StateEncoder), output is 104 (one
+       logit per possible card value 1–104).
 
 References:
     Brown et al., "Deep Counterfactual Regret Minimization", ICML 2019.
@@ -44,7 +44,7 @@ for c in range(1, 105):
 BULLHEADS = tuple(BULLHEADS)
 
 # Compact feature vector dimensionality (see StateEncoder for layout).
-INPUT_DIM = 140
+INPUT_DIM = 151
 
 
 # =============================================================================
@@ -53,7 +53,7 @@ INPUT_DIM = 140
 
 class StateEncoder:
     """
-    Encodes a 6 Nimmt! game state into a compact 140-dimensional tensor
+    Encodes a 6 Nimmt! game state into a compact 151-dimensional tensor
     packed with game-theoretic features.
 
     Design Rationale:
@@ -63,9 +63,9 @@ class StateEncoder:
         is "between" 49 and 51 purely from data.  This encoder instead
         provides normalized scalar values, per-card relational features
         (target row, collision risk, 6th-card danger), and distributional
-        statistics over unseen cards, all in 140 dims.
+        statistics over unseen cards.
 
-    Tensor Layout (140 dims total):
+    Tensor Layout (151 dims total):
         Block 1 [  0 –  9]  Hand card values
             Sorted, normalized to [0, 1], zero-padded to max hand size of 10.
 
@@ -101,10 +101,17 @@ class StateEncoder:
                 [9]  max_row_penalty / 35
                 [10] hand_size / 10
                 [11] hand_spread / 104         — max(hand) – min(hand)
+                
+        Block 5 [140 – 150]  Opponent Modeling  (11 dims)
+                [0]   our_penalty / 66             — our accumulated bullheads
+                [1–3] sorted_opponent_penalties / 66  — opponents' scores, sorted ascending
+                [4]   score_rank / 3               — our rank (0.0 = best, 1.0 = worst)
+                [5–7] opponent_played_card_means / 104  — mean of each opponent's played cards
+                [8–10] opponent_played_card_stds / 104   — std of each opponent's played cards
     """
 
     @staticmethod
-    def encode(hand, board, round_num=0, played_cards=None):
+    def encode(hand, board, round_num=0, played_cards=None, scores=None, history_matrix=None, player_idx=0):
         """
         Encode the current game state into a fixed-size feature tensor.
 
@@ -118,9 +125,15 @@ class StateEncoder:
                 in prior rounds. When provided, these are excluded from the
                 "unseen" pool, yielding more accurate collision and catchment
                 estimates. Defaults to None (only hand + current board used).
+            scores (list[float] | None): Per-player accumulated bullhead
+                penalties. Used for risk calibration and opponent modeling.
+            history_matrix (list[list[int]] | None): Past rounds' played
+                cards per player. Used to infer opponent hand distributions.
+            player_idx (int): The index of the player whose perspective we are
+                encoding. Used to extract 'our' score vs 'opponents' scores.
 
         Returns:
-            torch.Tensor: Feature vector of shape ``(INPUT_DIM,)`` = ``(140,)``.
+            torch.Tensor: Feature vector of shape ``(INPUT_DIM,)`` = ``(151,)``.
         """
         tensor = torch.zeros(INPUT_DIM, dtype=torch.float32)
 
@@ -279,6 +292,41 @@ class StateEncoder:
         tensor[offset + 10] = hand_size / 10.0                      # Current hand size
         if hand_size > 1:
             tensor[offset + 11] = (sorted_hand[-1] - sorted_hand[0]) / 104.0  # Hand value spread
+            
+        offset += 12
+        
+        # =============================================================
+        # Block 5: Opponent Modeling (11 dims)
+        #
+        # Models the competitive context: our relative score, opponents'
+        # scores (sorted to ensure permutation invariance across seats),
+        # and statistical summaries of what each opponent has played so far
+        # to infer their remaining hand ranges.
+        # =============================================================
+        if scores is not None and len(scores) == 4:
+            our_score = scores[player_idx]
+            opp_scores = [scores[i] for i in range(4) if i != player_idx]
+            
+            tensor[offset + 0] = our_score / 66.0
+            
+            sorted_opp_scores = sorted(opp_scores)
+            tensor[offset + 1] = sorted_opp_scores[0] / 66.0
+            tensor[offset + 2] = sorted_opp_scores[1] / 66.0
+            tensor[offset + 3] = sorted_opp_scores[2] / 66.0
+            
+            # Rank: 0 is best (lowest score), 3 is worst
+            rank = sum(1 for s in scores if s < our_score)
+            tensor[offset + 4] = rank / 3.0
+            
+        if history_matrix is not None and len(history_matrix) > 0:
+            opp_indices = [i for i in range(4) if i != player_idx]
+            for i, opp_idx in enumerate(opp_indices):
+                opp_played = [round_acts[opp_idx] for round_acts in history_matrix]
+                if opp_played:
+                    mean_val = sum(opp_played) / len(opp_played)
+                    tensor[offset + 5 + i] = mean_val / 104.0
+                    variance = sum((c - mean_val) ** 2 for c in opp_played) / len(opp_played)
+                    tensor[offset + 8 + i] = (variance ** 0.5) / 104.0
 
         return tensor
 
@@ -315,7 +363,7 @@ class RegretNet(nn.Module):
     regret matching to derive action probabilities during tree traversal.
 
     Architecture:
-        Linear(140→256) → ReLU → LayerNorm
+        Linear(151→256) → ReLU → LayerNorm
         Linear(256→256) → ReLU → LayerNorm
         Linear(256→256) → ReLU → LayerNorm
         Linear(256→104)

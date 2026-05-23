@@ -309,7 +309,7 @@ class MCCFR_Traverser:
         self.exploration_prob = 0.1
 
     def traverse(self, hand, opp_hands, board, row_bullheads, player_idx,
-                 played_cards, depth=0, max_depth=5):
+                 played_cards, all_penalties, round_history, depth=0, max_depth=5):
         """
         Recursively traverse the game tree from the traverser's perspective.
 
@@ -320,6 +320,8 @@ class MCCFR_Traverser:
             row_bullheads (list[int]): Running bullhead totals per row.
             player_idx (int): Traverser's seat index.
             played_cards (set[int]): Cards played so far (for unseen tracking).
+            all_penalties (list[float]): Current penalties for all 4 players.
+            round_history (list[list[int]]): History of played cards per round.
             depth (int): Current recursion depth (corresponds to round number).
             max_depth (int): Maximum traversal depth before terminal estimation.
 
@@ -331,7 +333,8 @@ class MCCFR_Traverser:
             return terminal_estimate(hand, opp_hands, board, row_bullheads, player_idx)
 
         # Encode current state and derive strategy via regret matching
-        state_tensor = StateEncoder.encode(hand, board, round_num=depth, played_cards=played_cards)
+        state_tensor = StateEncoder.encode(hand, board, round_num=depth, played_cards=played_cards,
+                                           scores=all_penalties, history_matrix=round_history, player_idx=player_idx)
         legal_mask = StateEncoder.get_legal_mask(hand)
         strategy = get_strategy(self.regret_net, state_tensor, hand, self.device)
 
@@ -346,7 +349,8 @@ class MCCFR_Traverser:
                 if random.random() < self.exploration_prob:
                     action = random.choice(opp_hand)
                 else:
-                    opp_state = StateEncoder.encode(opp_hand, board, round_num=depth)
+                    opp_state = StateEncoder.encode(opp_hand, board, round_num=depth, played_cards=played_cards,
+                                                    scores=all_penalties, history_matrix=round_history, player_idx=i)
                     opp_strat = get_strategy(self.regret_net, opp_state, opp_hand, self.device)
                     probs = [opp_strat[c - 1].item() for c in opp_hand]
                     action = random.choices(opp_hand, weights=probs, k=1)[0]
@@ -378,10 +382,23 @@ class MCCFR_Traverser:
             for opp_card, opp_idx in opp_actions:
                 next_opp_hands[opp_idx] = [c for c in opp_hands[opp_idx] if c != opp_card]
 
+            # Record the actions of this round
+            # We must reconstruct the actions in player index order
+            trick_actions = [0, 0, 0, 0]
+            for c, p_idx in pending:
+                trick_actions[p_idx] = c
+            
+            sim_round_history = [r[:] for r in round_history]
+            sim_round_history.append(trick_actions)
+            
+            sim_all_penalties = all_penalties[:]
+            for idx in range(4):
+                sim_all_penalties[idx] += penalties[idx]
+
             # Recurse into the next round
             future_penalty = self.traverse(
                 next_hand, next_opp_hands, sim_board, sim_row_bullheads,
-                player_idx, sim_played_cards, depth + 1, max_depth
+                player_idx, sim_played_cards, sim_all_penalties, sim_round_history, depth + 1, max_depth
             )
 
             total_penalty = immediate_penalty + future_penalty
@@ -456,9 +473,11 @@ def generate_data(num_games=1000, data_dir="results/deep_cfr"):
         opp_hands = {i: hands[i] for i in range(4) if i != player_idx}
 
         played_cards = set()
+        all_penalties = [0.0, 0.0, 0.0, 0.0]
+        round_history = []
         traverser.traverse(
             hand, opp_hands, board, row_bullheads, player_idx,
-            played_cards, depth=0, max_depth=5
+            played_cards, all_penalties, round_history, depth=0, max_depth=5
         )
 
     # Save replay buffers to disk

@@ -9,7 +9,7 @@ forward pass per turn — no search or simulation — making it extremely fast
 Workflow:
     1. Parse the game engine's ``history`` dict to extract the current board,
        round number, and all previously revealed cards.
-    2. Encode the game state into a 140-dim feature tensor via StateEncoder.
+    2. Encode the game state into a 151-dim feature tensor via StateEncoder.
     3. Run a single forward pass through the PolicyNet to obtain a probability
        distribution over all 104 possible card actions.
     4. Sample from the distribution (mixed strategy) to select an action.
@@ -101,6 +101,8 @@ class DeepCFR:
         if isinstance(history, dict):
             board = history.get('board', [])
             round_num = history.get('round', 0)
+            scores = history.get('scores', [0.0]*4)
+            history_matrix = history.get('history_matrix', [])
 
             # Reconstruct the set of all cards that have been publicly
             # revealed across previous rounds. This includes:
@@ -118,17 +120,20 @@ class DeepCFR:
             board = history[-1]
             round_num = 0
             played_cards = None
+            scores = None
+            history_matrix = None
 
         # ---- 2. Encode State ----
         state_tensor = StateEncoder.encode(
-            hand, board, round_num=round_num, played_cards=played_cards
+            hand, board, round_num=round_num, played_cards=played_cards,
+            scores=scores, history_matrix=history_matrix, player_idx=self.player_idx
         ).to(self.device)
         legal_mask = StateEncoder.get_legal_mask(hand).to(self.device)
 
         # ---- 3. Neural Network Inference ----
         with torch.no_grad():
             state_batch = state_tensor.unsqueeze(0)   # (1, INPUT_DIM)
-            mask_batch = legal_mask.unsqueeze(0)       # (1, 104)
+            mask_batch = legal_mask.unsqueeze(0)      # (1, 104)
 
             # Obtain probability distribution over all 104 cards
             probs = self.policy_net(

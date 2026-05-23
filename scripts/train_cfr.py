@@ -236,11 +236,20 @@ if __name__ == '__main__':
                         help="Run the full Deep CFR generation+training loop")
     parser.add_argument("--iters", type=int, default=5,
                         help="Number of external Deep CFR iterations")
+    parser.add_argument("--pretrain", action="store_true",
+                        help="Run FlatMCO1 imitation pre-training before the deep CFR loop")
+    parser.add_argument("--pretrain_games", type=int, default=200,
+                        help="Number of games to use for pre-training")
     parser.add_argument("--games_per_iter", type=int, default=500,
                         help="Number of games to generate per iteration")
     parser.add_argument("--data_dir", type=str, default="results/deep_cfr",
                         help="Directory to store replay buffer .pkl files")
     args = parser.parse_args()
+
+    if args.pretrain:
+        print("=== Running FlatMCO1 Imitation Pre-Training ===")
+        import scripts.pretrain_from_flatmc as pretrain
+        pretrain.generate_and_train(num_games=args.pretrain_games)
 
     if args.loop:
         full_deep_cfr_loop(args.iters, args.games_per_iter, args.data_dir)
