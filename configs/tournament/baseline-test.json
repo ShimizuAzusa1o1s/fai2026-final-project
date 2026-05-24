@@ -1,34 +1,34 @@
 {
     "baselines": [
         [
-            "src.players.TA.public_baselines2",
-            "Baseline6",
+            "src.players.TA.public_baselines1",
+            "Baseline1",
             {},
-            "B6"
+            "B1"
         ],
         [
-            "src.players.TA.public_baselines2",
-            "Baseline7",
+            "src.players.TA.public_baselines1",
+            "Baseline2",
             {},
-            "B7"
+            "B2"
         ],
         [
-            "src.players.TA.public_baselines2",
-            "Baseline8",
+            "src.players.TA.public_baselines1",
+            "Baseline3",
             {},
-            "B8"
+            "B3"
         ],
         [
-            "src.players.TA.public_baselines2",
-            "Baseline9",
+            "src.players.TA.public_baselines1",
+            "Baseline4",
             {},
-            "B9"
+            "B4"
         ],
         [
-            "src.players.TA.public_baselines2",
-            "Baseline10",
+            "src.players.TA.public_baselines1",
+            "Baseline5",
             {},
-            "B10"
+            "B5"
         ]
     ],
     "players": [
@@ -44,7 +44,7 @@
         "n_rounds": 10,
         "verbose": false,
         "timeout": 1.0,
-        "timeout_buffer": 5.0
+        "timeout_buffer": 0.5
     },
     "tournament": {
         "type": "random_partition",
