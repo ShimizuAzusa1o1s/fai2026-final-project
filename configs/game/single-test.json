@@ -16,10 +16,10 @@
             "label"
         ],
         {
-            "path": "src.players.b12705048.flat_mc_o1",
-            "class": "FlatMCO1",
+            "path": "src.players.b12705048.agents.flat_mc_o1",
+            "class": "FlatMCo1",
             "args": {},
-            "label": "FlatMCO1"
+            "label": "FMC_o1"
         }
     ],
     "engine": {

@@ -56,7 +56,7 @@ def generate_games(worker_id, num_games, time_limit):
     # Configure the four-player game: FlatMC + three diverse opponents
     config = {
         "players": [
-            ["src.players.b12705048.flat_mc", "FlatMC"],
+            ["src.players.b12705048.agents.flat_mc", "FlatMC"],
             ["src.players.TA.public_baselines1", "Baseline5"],
             ["src.players.TA.public_baselines2", "Baseline10"],
             ["src.players.TA.random_player", "RandomPlayer"]

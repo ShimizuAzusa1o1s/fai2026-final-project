@@ -16,7 +16,7 @@ Feature Layout (143 dimensions):
 
 import os
 import numpy as np
-from src.players.b12705048.features import extract_features
+from src.players.b12705048.core.features import extract_features
 
 
 class RFPlayer:

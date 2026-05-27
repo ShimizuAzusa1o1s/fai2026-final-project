@@ -47,14 +47,14 @@ import torch.optim as optim
 
 sys.path.insert(0, os.getcwd())
 
-from src.players.b12705048.fast_game import FastGame
-from src.players.b12705048.features import N_FEATURES
-from src.players.b12705048.networks import (
+from src.players.b12705048.core.fast_game import FastGame
+from src.players.b12705048.core.features import N_FEATURES
+from src.players.b12705048.core.networks import (
     AdvantageNetwork,
     regret_matching_np,
     save_model,
 )
-from src.players.b12705048.reservoir_buffer import ReservoirBuffer
+from src.players.b12705048.core.reservoir_buffer import ReservoirBuffer
 
 
 # ── CFR Traversal ──────────────────────────────────────────────────────────
@@ -290,7 +290,7 @@ def main() -> None:
     parser.add_argument("--device", type=str, default="cpu",
                         help="Torch device for training ('cpu' or 'cuda').")
     parser.add_argument("--save-dir", type=str,
-                        default="src/players/b12705048",
+                        default="src/players/b12705048/sdcfr",
                         help="Directory for model checkpoints.")
     parser.add_argument("--buffer-dir", type=str,
                         default="/tmp2/b12705048",

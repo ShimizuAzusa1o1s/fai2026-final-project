@@ -17,13 +17,13 @@ import os
 import numpy as np
 import torch
 
-from src.players.b12705048.features import (
+from src.players.b12705048.core.features import (
     N_FEATURES,
     BULLHEADS,
     extract_features,
     compute_unseen_cards,
 )
-from src.players.b12705048.networks import (
+from src.players.b12705048.core.networks import (
     AdvantageNetwork,
     regret_matching_np,
 )

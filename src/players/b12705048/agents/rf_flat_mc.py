@@ -53,7 +53,7 @@ try:
 except ImportError:
     np = None
 
-from src.players.b12705048.features import extract_features
+from src.players.b12705048.core.features import extract_features
 
 
 class FlatMC:

@@ -8,7 +8,7 @@ round resolution.
 """
 
 import random
-from src.players.b12705048.features import (
+from src.players.b12705048.core.features import (
     BULLHEADS, N_FEATURES, extract_features, compute_unseen_cards,
 )
 

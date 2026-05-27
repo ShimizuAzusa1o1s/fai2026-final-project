@@ -25,13 +25,13 @@ from sklearn.ensemble import RandomForestClassifier
 sys.path.append(os.getcwd())
 from src.engine import Engine
 
-from src.players.b12705048.features import extract_features
+from src.players.b12705048.core.features import extract_features
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=str, default="results/rf_data.pkl")
-    parser.add_argument("--out", type=str, default="src/players/b12705048/rf_model.npz")
+    parser.add_argument("--out", type=str, default="src/players/b12705048/agents/rf_model.npz")
     parser.add_argument("--estimators", type=int, default=50)
     args = parser.parse_args()
     
