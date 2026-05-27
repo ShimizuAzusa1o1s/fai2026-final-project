@@ -49,7 +49,7 @@ except ImportError:
 from src.players.b12705048.core.features import extract_features
 
 
-class UCB_RF_MC:
+class UCB_RF_MCo1:
     """
     UCB Monte Carlo agent with Rational Random Forest rollouts.
 
@@ -71,7 +71,7 @@ class UCB_RF_MC:
             model file is missing or NumPy is unavailable.
     """
 
-    def __init__(self, player_idx, ucb_c=10.0, rf_depth=3, batch_size=8):
+    def __init__(self, player_idx, ucb_c=10.0, rf_depth=3, batch_size=64):
         """
         Initialize the UCB + RF Monte Carlo player.
 
@@ -104,7 +104,7 @@ class UCB_RF_MC:
                 bullheads[card] = 2
             else:
                 bullheads[card] = 1
-        self.bullhead_lookup = tuple(bullheads)
+        self.bullhead_lookup = np.array(bullheads, dtype=np.int32)
 
         # Try to load the RF model
         self.rf_model = None
@@ -389,15 +389,71 @@ class UCB_RF_MC:
                         game['score_history'].append(current_scores)
 
                 else:
-                    # Depth ≥ rf_depth: pure uniform random play.
-                    for g_idx, game in enumerate(games):
-                        pending_actions = []
-                        for i in range(4):
-                            valid_cards = game['hands'][i]
-                            idx = random.randrange(len(valid_cards))
-                            card = valid_cards.pop(idx)
-                            pending_actions.append((card, i))
-                        self._resolve_trick(game['board'], game['row_bullheads'], pending_actions, game['penalties'])
+                    # Depth >= rf_depth: pure uniform random play.
+                    # Convert to NumPy SoA and resolve all remaining tricks instantly.
+                    if depth == self.rf_depth:
+                        actual_batch_size = len(games)
+                        rem_turns = n_turns - 1 - depth
+                        
+                        if rem_turns > 0:
+                            b_tails = np.array([[game['board'][r][-1] for r in range(4)] for game in games], dtype=np.int32)
+                            b_lengths = np.array([[len(game['board'][r]) for r in range(4)] for game in games], dtype=np.int32)
+                            b_rbulls = np.array([game['row_bullheads'] for game in games], dtype=np.int32)
+                            b_penalties = np.zeros((actual_batch_size, 4), dtype=np.int32)
+                            
+                            hands_array = np.zeros((actual_batch_size, 4, rem_turns), dtype=np.int32)
+                            for g_idx, game in enumerate(games):
+                                for p_idx in range(4):
+                                    rem_hand = game['hands'][p_idx][:]
+                                    random.shuffle(rem_hand)
+                                    hands_array[g_idx, p_idx, :] = rem_hand
+                                    
+                            for t in range(rem_turns):
+                                played_cards = hands_array[:, :, t]
+                                sort_idx = np.argsort(played_cards, axis=1)
+                                sorted_cards = np.take_along_axis(played_cards, sort_idx, axis=1)
+                                sorted_players = sort_idx
+                                
+                                for i in range(4):
+                                    current_cards = sorted_cards[:, i]
+                                    current_players = sorted_players[:, i]
+
+                                    valid = np.where(current_cards[:, None] > b_tails, b_tails, -1)
+                                    target_rows = np.argmax(valid, axis=1)
+                                    invalid_mask = np.max(valid, axis=1) == -1
+
+                                    scores = b_rbulls * 1000 + b_lengths * 10 + np.arange(4)
+                                    min_rows = np.argmin(scores, axis=1)
+                                    target_rows = np.where(invalid_mask, min_rows, target_rows)
+
+                                    b_idx = np.arange(actual_batch_size)
+                                    target_lengths = b_lengths[b_idx, target_rows]
+                                    target_bullheads = b_rbulls[b_idx, target_rows]
+
+                                    penalty_condition = invalid_mask | (target_lengths == 5)
+                                    normal_cond = ~penalty_condition
+                                    card_bulls = self.bullhead_lookup[current_cards]
+
+                                    if np.any(penalty_condition):
+                                        pc = penalty_condition
+                                        b_pc = b_idx[pc]
+                                        p_players = current_players[pc]
+                                        b_penalties[b_pc, p_players] += target_bullheads[pc]
+                                        b_lengths[b_pc, target_rows[pc]] = 1
+                                        b_tails[b_pc, target_rows[pc]] = current_cards[pc]
+                                        b_rbulls[b_pc, target_rows[pc]] = card_bulls[pc]
+
+                                    if np.any(normal_cond):
+                                        nc = normal_cond
+                                        b_nc = b_idx[nc]
+                                        b_lengths[b_nc, target_rows[nc]] += 1
+                                        b_tails[b_nc, target_rows[nc]] = current_cards[nc]
+                                        b_rbulls[b_nc, target_rows[nc]] += card_bulls[nc]
+                            
+                            for g_idx, game in enumerate(games):
+                                for p_idx in range(4):
+                                    game['penalties'][p_idx] += int(b_penalties[g_idx, p_idx])
+                        break
 
             # ---- Phase 3: Accumulate Results ----
             for game in games:

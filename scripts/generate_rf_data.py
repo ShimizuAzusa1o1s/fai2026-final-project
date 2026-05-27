@@ -1,9 +1,9 @@
 """
 Training Data Generator for the Random Forest Rollout Policy.
 
-This script simulates games between FlatMC (acting as the expert) and a mix
+This script simulates games between FlatMCo1 (acting as the expert) and a mix
 of public baselines, recording the board state, hand, unseen cards, and chosen
-action for every turn taken by FlatMC (Player 0).  The collected dataset is
+action for every turn taken by FlatMCo1 (Player 0).  The collected dataset is
 saved as a pickled list of dicts to ``results/rf_data.pkl`` and is consumed by
 ``train_rf_model.py``.
 
@@ -12,15 +12,15 @@ Usage:
 
 Configuration (edit constants in ``__main__`` block):
     num_games_total  -- Total games to generate (default: 50,000 across workers).
-    time_limit       -- FlatMC wall-clock budget per action in seconds.
+    time_limit       -- FlatMCo1 wall-clock budget per action in seconds.
     num_workers      -- Number of parallel worker processes.
 
 Output format (each element of the pickled list):
     {
         "board"        : list[list[int]],  # 4 board rows at decision time
-        "hand"         : list[int],        # FlatMC's full hand
+        "hand"         : list[int],        # FlatMCo1's full hand
         "unseen_cards" : list[int],        # cards neither on board nor in hand
-        "action"       : int               # card value FlatMC chose to play
+        "action"       : int               # card value FlatMCo1 chose to play
     }
 """
 
@@ -39,24 +39,24 @@ from src.game_utils import load_players, _preprocess_player_config
 
 def generate_games(worker_id, num_games, time_limit):
     """
-    Worker function: simulate ``num_games`` games and collect FlatMC decisions.
+    Worker function: simulate ``num_games`` games and collect FlatMCo1 decisions.
 
-    FlatMC always occupies seat 0.  Opponents are drawn from a fixed mix of
+    FlatMCo1 always occupies seat 0.  Opponents are drawn from a fixed mix of
     public baselines and a random player to expose the model to diverse
     opponent behaviours.
 
     Args:
         worker_id (int): Worker index (unused but required by ``starmap``).
         num_games (int): Number of complete games to simulate.
-        time_limit (float): Wall-clock budget per FlatMC action in seconds.
+        time_limit (float): Wall-clock budget per FlatMCo1 action in seconds.
 
     Returns:
-        list[dict]: Collected state-action samples (one per FlatMC turn).
+        list[dict]: Collected state-action samples (one per FlatMCo1 turn).
     """
-    # Configure the four-player game: FlatMC + three diverse opponents
+    # Configure the four-player game: FlatMCo1 + three diverse opponents
     config = {
         "players": [
-            ["src.players.b12705048.agents.flat_mc", "FlatMC"],
+            ["src.players.b12705048.agents.flat_mc_o1", "FlatMCo1"],
             ["src.players.TA.public_baselines1", "Baseline5"],
             ["src.players.TA.public_baselines2", "Baseline10"],
             ["src.players.TA.random_player", "RandomPlayer"]
@@ -80,7 +80,7 @@ def generate_games(worker_id, num_games, time_limit):
         players_instances = []
         for j, p_cls in enumerate(players_classes):
             players_instances.append(p_cls(player_idx=j))
-            if j == 0:  # Set FlatMC's time limit explicitly
+            if j == 0:  # Set FlatMCo1's time limit explicitly
                 players_instances[j].time_limit = time_limit
 
         engine = Engine(config["engine"], players_instances)
@@ -98,7 +98,7 @@ def generate_games(worker_id, num_games, time_limit):
                 "score_history": engine.score_history,
             }
 
-            # Snapshot FlatMC's state BEFORE any player acts this round
+            # Snapshot FlatMCo1's state BEFORE any player acts this round
             p0_hand = engine.hands[0].copy()
             p0_board = [row.copy() for row in engine.board]
             
@@ -121,7 +121,7 @@ def generate_games(worker_id, num_games, time_limit):
 
             unseen_cards = list(set(range(1, 105)) - visible_cards - set(p0_hand))
 
-            # Collect actions from all players, recording only FlatMC's decision
+            # Collect actions from all players, recording only FlatMCo1's decision
             round_actions = [0] * engine.n_players
             round_flags = [False] * engine.n_players
             current_played_cards = []
@@ -165,7 +165,7 @@ def generate_games(worker_id, num_games, time_limit):
 if __name__ == "__main__":
     print("Starting data generation for Random Forest...")
     num_games_total = 1000
-    time_limit = 1.0
+    time_limit = 0.5
     num_workers = 8
 
     games_per_worker = num_games_total // num_workers

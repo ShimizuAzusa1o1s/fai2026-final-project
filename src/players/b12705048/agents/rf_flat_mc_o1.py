@@ -21,7 +21,7 @@ Algorithm:
             b. Roll out remaining tricks with all players following a
                **Mixed Rollout** policy:
                - Depths 0–2: RF heuristic with ε-Greedy exploration
-                 (ε=0.10); 10 % of actions are uniformly random to
+                 (ε=0.10); 10% of actions are uniformly random to
                  prevent overfitting to the RF's expectations.
                - Depths 3+: Fast uniform random play.
                Both branches are evaluated in a single batched NumPy call
@@ -56,7 +56,7 @@ except ImportError:
 from src.players.b12705048.core.features import extract_features
 
 
-class FlatMC:
+class FlatMCo1:
     """
     1-ply Monte Carlo agent for 6 Nimmt! with RF-guided action pruning and
     mixed ε-greedy rollouts.
@@ -103,7 +103,8 @@ class FlatMC:
                 bullheads[card] = 2
             else:
                 bullheads[card] = 1
-        self.bullhead_lookup = tuple(bullheads)
+        self.batch_size = 5000
+        self.bullhead_lookup = np.array(bullheads, dtype=np.int32)
         
         # Try to load the RF model
         self.rf_model = None
@@ -113,20 +114,6 @@ class FlatMC:
                 self.rf_model = dict(np.load(model_path))
 
     def _predict_proba(self, X):
-        """
-        Evaluate the batched feature matrix using the loaded Random Forest model.
-
-        Performs a fully vectorised tree traversal using NumPy to compute
-        class probabilities for each sample in the batch without relying
-        on scikit-learn.
-
-        Args:
-            X (np.ndarray): Batched feature matrix of shape (batch_size, 115).
-
-        Returns:
-            np.ndarray: Probability distribution over the 10 sorted hand slots,
-                shape (batch_size, 10).
-        """
         n_estimators = self.rf_model['n_estimators'][0]
         batch_size = X.shape[0]
         
@@ -166,28 +153,8 @@ class FlatMC:
         return probas
 
     def action(self, hand, history):
-        """
-        Evaluate each candidate card via batched Monte Carlo rollouts and
-        return the card with the lowest expected penalty.
-
-        The method uses all available wall-clock time to run as many
-        simulation batches as possible.  Each batch processes every candidate
-        card simultaneously (SIMD vectorisation over candidate branches).
-
-        Args:
-            hand (list[int]): Cards currently available to play.
-            history (dict | list): Game state from the engine. Used to
-                determine which cards are visible (on board or played in
-                prior rounds) and which remain unseen.
-
-        Returns:
-            int: The card value with the lowest average simulated penalty.
-        """
         start_time = time.perf_counter()
 
-        # ---- 1. State Parsing ----
-        # Extract current board and identify all visible cards to determine
-        # the pool of unseen cards that could be in opponents' hands.
         if isinstance(history, dict):
             board = history.get('board', [])
         else:
@@ -209,11 +176,6 @@ class FlatMC:
         
         candidates = hand
         if self.rf_model is not None and len(candidates) > 3:
-            # ---- Action Pruning: Candidate Filtering ----
-            # Evaluate every card in our hand using the RF model and keep
-            # only the Top 3 most likely choices.  All simulation time is
-            # then focused exclusively on these promising candidates.
-            # Use the robust 115-dim Deep CFR features.
             h_scores = history.get('scores', [0,0,0,0]) if isinstance(history, dict) else [0,0,0,0]
             h_round = history.get('round', 0) if isinstance(history, dict) else 0
             h_history_matrix = history.get('history_matrix', []) if isinstance(history, dict) else []
@@ -240,141 +202,115 @@ class FlatMC:
             sorted_hand = sorted(hand)
             valid_len = len(sorted_hand)
             p = probas.copy()
-            p[valid_len:] = -1.0  # Mask out empty slots
+            p[valid_len:] = -1.0
             
-            # Get indices of top 3 predictions
             top3_idx = np.argsort(p)[-3:]
             candidates = [sorted_hand[idx] for idx in top3_idx]
 
-        # Per-candidate accumulators: total penalty and number of visits
         stats_penalty = {c: 0.0 for c in candidates}
         stats_visits = {c: 0 for c in candidates}
 
-        opp_indices = [i for i in range(4) if i != self.player_idx]
+        orig_tails = np.array([row[-1] for row in board], dtype=np.int32)
+        orig_lengths = np.array([len(row) for row in board], dtype=np.int32)
+        orig_rbulls = np.array([sum(self.bullhead_lookup[c] for c in row) for row in board], dtype=np.int32)
+        
+        unseen_mask_base = np.zeros(105, dtype=bool)
+        unseen_mask_base[unseen_cards] = True
 
-        # Pre-compute row totals once so each simulation can copy cheaply
-        orig_row_bullheads = [sum(self.bullhead_lookup[c] for c in row) for row in board]
-
-        # ---- 2. Monte Carlo Simulation Loop ----
-        # Run as many simulations as the time budget allows
         while time.perf_counter() - start_time < self.time_limit:
-            # Shuffle unseen cards once per batch
-            random.shuffle(unseen_cards)
+            num_cand = len(candidates)
+            sims_per_cand = self.batch_size // num_cand
+            actual_batch_size = sims_per_cand * num_cand
+
+            if actual_batch_size == 0:
+                break
+
+            tails = np.tile(orig_tails, (actual_batch_size, 1))
+            lengths = np.tile(orig_lengths, (actual_batch_size, 1))
+            rbulls = np.tile(orig_rbulls, (actual_batch_size, 1))
+            penalties = np.zeros((actual_batch_size, 4), dtype=np.int32)
+
+            rand_weights = np.random.rand(actual_batch_size, 105)
+            unseen_mask = np.tile(unseen_mask_base, (actual_batch_size, 1))
+            rand_weights[~unseen_mask] = -1.0
+            perm = np.argsort(-rand_weights, axis=1)
             
-            # ---- Phase 1: Initial Placement ----
-            # For each candidate, clone the board, deal opponent hands from
-            # the shared shuffled pool, then resolve the first trick.
-            games = []
-            for candidate in candidates:
-                # Shallow-copy rows (cards are immutable ints, so this is safe)
-                sim_board = [row[:] for row in board]
-                sim_row_bullheads = orig_row_bullheads[:]
+            opp_indices = [i for i in range(4) if i != self.player_idx]
+            hands_array = np.zeros((actual_batch_size, 4, n_turns), dtype=np.int32)
+            hands_array[:, opp_indices[0], :] = perm[:, 0:n_turns]
+            hands_array[:, opp_indices[1], :] = perm[:, n_turns:2*n_turns]
+            hands_array[:, opp_indices[2], :] = perm[:, 2*n_turns:3*n_turns]
 
-                # Slice (copy) opponent hands from the shuffled unseen pool.
-                # All candidates share the same random world in this batch,
-                # which is statistically equivalent to separate shuffles and
-                # reduces variance while saving computation.
-                sim_hands = [None] * 4
-                sim_hands[opp_indices[0]] = unseen_cards[0:n_turns]
-                sim_hands[opp_indices[1]] = unseen_cards[n_turns:2*n_turns]
-                sim_hands[opp_indices[2]] = unseen_cards[2*n_turns:3*n_turns]
+            c_idx = 0
+            for c in candidates:
+                start_b = c_idx * sims_per_cand
+                end_b = start_b + sims_per_cand
 
-                # Our hand minus the candidate card, shuffled for rollout order
-                my_sim_hand = [c for c in hand if c != candidate]
-                random.shuffle(my_sim_hand)
-                sim_hands[self.player_idx] = my_sim_hand
+                my_rest = [x for x in hand if x != c]
+                rest_arr = np.array(my_rest, dtype=np.int32)
+                my_hands_chunk = np.tile(rest_arr, (sims_per_cand, 1))
+                
+                if len(my_rest) > 0:
+                    rand_my = np.random.rand(sims_per_cand, len(my_rest))
+                    my_perm = np.argsort(rand_my, axis=1)
+                    my_hands_chunk = np.take_along_axis(my_hands_chunk, my_perm, axis=1)
 
-                penalties = [0.0, 0.0, 0.0, 0.0]
+                hands_array[start_b:end_b, self.player_idx, 0] = c
+                if len(my_rest) > 0:
+                    hands_array[start_b:end_b, self.player_idx, 1:] = my_hands_chunk
 
-                # Opponents play their highest-indexed (last) card; order does
-                # not matter here since _resolve_trick sorts by card value.
-                pending_actions = [(candidate, self.player_idx)]
-                for opp_idx in opp_indices:
-                    pending_actions.append((sim_hands[opp_idx].pop(), opp_idx))
+                c_idx += 1
 
-                self._resolve_trick(sim_board, sim_row_bullheads, pending_actions, penalties)
+            for t in range(n_turns):
+                played_cards = hands_array[:, :, t]
+                sort_idx = np.argsort(played_cards, axis=1)
+                sorted_cards = np.take_along_axis(played_cards, sort_idx, axis=1)
+                sorted_players = sort_idx
 
-                games.append({
-                    'candidate': candidate,
-                    'board': sim_board,
-                    'row_bullheads': sim_row_bullheads,
-                    'hands': sim_hands,
-                    'penalties': penalties
-                })
+                for i in range(4):
+                    current_cards = sorted_cards[:, i]
+                    current_players = sorted_players[:, i]
 
-            # ---- Phase 2: Pure Random Rollout ----
-            # Roll out remaining tricks with fast uniform random play.
-            # (RF heuristic is disabled during rollouts due to feature complexity).
-            for depth in range(n_turns - 1):
-                for g_idx, game in enumerate(games):
-                    pending_actions = []
-                    for i in range(4):
-                        valid_cards = game['hands'][i]
-                        # Fast uniform random fallback
-                        idx = random.randrange(len(valid_cards))
-                        best_card = valid_cards.pop(idx)
-                        pending_actions.append((best_card, i))
-                    self._resolve_trick(game['board'], game['row_bullheads'], pending_actions, game['penalties'])
-                        
-            # ---- Phase 3: Accumulate Results ----
-            for game in games:
-                stats_penalty[game['candidate']] += game['penalties'][self.player_idx]
-                stats_visits[game['candidate']] += 1
+                    valid = np.where(current_cards[:, None] > tails, tails, -1)
+                    target_rows = np.argmax(valid, axis=1)
+                    invalid_mask = np.max(valid, axis=1) == -1
 
-        # ---- 3. Action Selection ----
-        # Return the candidate with the lowest average simulated penalty.
-        best_card = min(
-            candidates,
-            key=lambda k: stats_penalty[k] / max(1, stats_visits[k])
-        )
+                    scores = rbulls * 1000 + lengths * 10 + np.arange(4)
+                    min_rows = np.argmin(scores, axis=1)
+                    target_rows = np.where(invalid_mask, min_rows, target_rows)
+
+                    b_idx = np.arange(actual_batch_size)
+                    target_lengths = lengths[b_idx, target_rows]
+                    target_bullheads = rbulls[b_idx, target_rows]
+
+                    penalty_condition = invalid_mask | (target_lengths == 5)
+                    normal_cond = ~penalty_condition
+                    card_bulls = self.bullhead_lookup[current_cards]
+
+                    if np.any(penalty_condition):
+                        pc = penalty_condition
+                        b_pc = b_idx[pc]
+                        p_players = current_players[pc]
+                        penalties[b_pc, p_players] += target_bullheads[pc]
+                        lengths[b_pc, target_rows[pc]] = 1
+                        tails[b_pc, target_rows[pc]] = current_cards[pc]
+                        rbulls[b_pc, target_rows[pc]] = card_bulls[pc]
+
+                    if np.any(normal_cond):
+                        nc = normal_cond
+                        b_nc = b_idx[nc]
+                        lengths[b_nc, target_rows[nc]] += 1
+                        tails[b_nc, target_rows[nc]] = current_cards[nc]
+                        rbulls[b_nc, target_rows[nc]] += card_bulls[nc]
+
+            c_idx = 0
+            for c in candidates:
+                start_b = c_idx * sims_per_cand
+                end_b = start_b + sims_per_cand
+                my_pens = penalties[start_b:end_b, self.player_idx]
+                stats_penalty[c] += np.sum(my_pens)
+                stats_visits[c] += sims_per_cand
+                c_idx += 1
+
+        best_card = min(candidates, key=lambda k: stats_penalty[k] / max(1, stats_visits[k]))
         return best_card
-
-    def _resolve_trick(self, board, row_bullheads, pending_actions, penalties):
-        """
-        Resolve a single trick according to 6 Nimmt! placement rules.
-
-        Cards are sorted by value (lowest first) and placed sequentially.
-        Modifies ``board``, ``row_bullheads``, and ``penalties`` in-place.
-
-        Args:
-            board (list[list[int]]): Current board rows.
-            row_bullheads (list[int]): Running bullhead totals per row.
-            pending_actions (list[tuple[int, int]]): (card, player_idx) pairs.
-            penalties (list[float]): Per-player accumulated penalties.
-        """
-        pending_actions.sort(key=lambda x: x[0])
-
-        for card, player_idx in pending_actions:
-            target_row = -1
-            max_val = -1
-
-            # Find the row whose tail is the largest value below this card
-            for r in range(4):
-                val = board[r][-1]
-                if val < card and val > max_val:
-                    max_val = val
-                    target_row = r
-
-            if target_row != -1:
-                if len(board[target_row]) == 5:
-                    # 6th-card rule: player takes the entire row
-                    penalties[player_idx] += row_bullheads[target_row]
-                    board[target_row] = [card]
-                    row_bullheads[target_row] = self.bullhead_lookup[card]
-                else:
-                    board[target_row].append(card)
-                    row_bullheads[target_row] += self.bullhead_lookup[card]
-            else:
-                # Low Card Rule: take the row with the lowest penalty
-                # Tiebreak: lowest bullheads → shortest row → smallest index
-                min_score = 100000
-                target_row = -1
-                for r in range(4):
-                    score = row_bullheads[r] * 1000 + len(board[r]) * 10 + r
-                    if score < min_score:
-                        min_score = score
-                        target_row = r
-
-                penalties[player_idx] += row_bullheads[target_row]
-                board[target_row] = [card]
-                row_bullheads[target_row] = self.bullhead_lookup[card]

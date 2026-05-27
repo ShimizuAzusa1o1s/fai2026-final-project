@@ -5,12 +5,12 @@ This module is primarily a **benchmarking tool** used to evaluate the
 standalone strength of the Random Forest heuristic, independent of the
 Monte Carlo search layer in ``flat_mc.py``.
 
-The agent uses the same pre-trained ``.npz`` model file (50 trees, 143
+The agent uses the same pre-trained ``.npz`` model file (50 trees, 115
 features) and the same inference code as ``FlatMC``, so their heuristic
 quality is directly comparable.  Because there is no search, each
 ``action()`` call is essentially instant.
 
-Feature Layout (143 dimensions):
+Feature Layout (115 dimensions):
     Uses the Deep CFR normalized feature format defined in ``features.py``.
 """
 
@@ -64,7 +64,7 @@ class RFPlayer:
         class probabilities without relying on scikit-learn.
 
         Args:
-            X (np.ndarray): Feature matrix of shape ``(1, 143)``.
+            X (np.ndarray): Feature matrix of shape ``(1, 115)``.
 
         Returns:
             np.ndarray: Probability distribution over the 10 sorted hand slots,
@@ -151,7 +151,7 @@ class RFPlayer:
         h_score_history = history.get('score_history', []) if isinstance(history, dict) else []
         h_board_history = history.get('board_history', []) if isinstance(history, dict) else []
 
-        features_143 = extract_features(
+        features_115 = extract_features(
             board=board,
             hand=hand,
             unseen=set(unseen_cards),
@@ -163,8 +163,8 @@ class RFPlayer:
             board_history=h_board_history,
         )
         
-        X = np.zeros((1, 143), dtype=np.float32)
-        X[0] = features_143
+        X = np.zeros((1, 115), dtype=np.float32)
+        X[0] = features_115
 
         probas = self._predict_proba(X)
 
