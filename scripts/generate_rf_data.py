@@ -101,6 +101,12 @@ def generate_games(worker_id, num_games, time_limit):
             # Snapshot FlatMC's state BEFORE any player acts this round
             p0_hand = engine.hands[0].copy()
             p0_board = [row.copy() for row in engine.board]
+            
+            p0_scores = engine.scores.copy()
+            p0_round = engine.round
+            p0_history_matrix = [r.copy() for r in engine.history_matrix]
+            p0_score_history = [s.copy() for s in engine.score_history]
+            p0_board_history = [[r.copy() for r in b] for b in engine.board_history]
 
             # Compute the set of unseen cards (not on board, not in hand) so
             # that the RF can estimate interception risk during feature extraction
@@ -130,6 +136,11 @@ def generate_games(worker_id, num_games, time_limit):
                         "board": p0_board,
                         "hand": p0_hand,
                         "unseen_cards": unseen_cards,
+                        "scores": p0_scores,
+                        "round_num": p0_round,
+                        "history_matrix": p0_history_matrix,
+                        "score_history": p0_score_history,
+                        "board_history": p0_board_history,
                         "action": played_card
                     })
 

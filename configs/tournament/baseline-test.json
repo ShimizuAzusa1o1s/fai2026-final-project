@@ -21,10 +21,10 @@
     ],
     "players": [
         [
-            "src.players.b12705048.rf_flat_mc",
-            "FlatMC",
+            "src.players.b12705048.flat_mc_o1",
+            "FlatMCo1",
             {},
-            "RFMC"
+            "FMC_O1"
         ]
     ],
     "engine": {

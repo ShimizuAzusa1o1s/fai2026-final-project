@@ -53,6 +53,8 @@ try:
 except ImportError:
     np = None
 
+from src.players.b12705048.features import extract_features
+
 
 class FlatMC:
     """
@@ -110,159 +112,6 @@ class FlatMC:
             if os.path.exists(model_path):
                 self.rf_model = dict(np.load(model_path))
 
-    def _extract_features_multi(self, games, X_batch):
-        """
-        Pack feature vectors for every player in every simulated game
-        into a single pre-allocated batch matrix.
-
-        Feature layout (115 dimensions total):
-
-            [  0– 11]  Board features: for each of the 4 rows (sorted by top
-                       card), 3 values: row length, top card value, row penalty.
-            [ 12]      Board max row bullheads.
-            [ 13]      Board min row bullheads.
-            [ 14]      Turn number (cards remaining in hand).
-            [ 15–114]  Card Features: 10 slots (for sorted hand), each with 10 features:
-                       1. Card Value
-                       2. Card Bullheads
-                       3. Is Under-Board (1 or 0)
-                       4. Distance to Target Row
-                       5. Unseen Cards in Gap
-                       6. Distance to Next Closest Row
-                       7. Target Row Length
-                       8. Target Row Bullheads
-                       9. Cheapest Available Row Bullheads
-                       10. Difference to Lowest Tail
-
-        The output rows are laid out as:
-
-            row  0 ...  3  →  game 0, players 0 ... 3
-            row  4 ...  7  →  game 1, players 0 ... 3
-
-        Args:
-            games (list[dict]): Active simulation states, each containing
-                ``'board'`` (list of rows) and ``'hands'`` (list of 4 hands).
-            X_batch (np.ndarray): Pre-allocated float32 array of shape
-                ``(4 * len(games), 115)``, filled in-place.
-        """
-        for g_idx, game in enumerate(games):
-            board = game['board']
-            hands = game['hands']
-            
-            sorted_board = sorted(board, key=lambda row: row[-1] if row else 0)
-            board_features = []
-            min_bullheads = 1000
-            max_bullheads = -1
-            
-            row_lengths = []
-            row_tops = []
-            row_bullheads = []
-            
-            for row in sorted_board:
-                if row:
-                    length = len(row)
-                    top = row[-1]
-                    b_heads = sum(self.bullhead_lookup[c] for c in row)
-                else:
-                    length = 0
-                    top = 0
-                    b_heads = 0
-                    
-                row_lengths.append(length)
-                row_tops.append(top)
-                row_bullheads.append(b_heads)
-                
-                board_features.extend([length, top, b_heads])
-                if b_heads < min_bullheads: min_bullheads = b_heads
-                if b_heads > max_bullheads: max_bullheads = b_heads
-                
-            if min_bullheads == 1000: min_bullheads = 0
-            if max_bullheads == -1: max_bullheads = 0
-            
-            board_features.extend([max_bullheads, min_bullheads])
-            
-            for i in range(4):
-                idx = g_idx * 4 + i
-                hand = hands[i]
-                turn_number = len(hand)
-                
-                unseen_set = set()
-                for j in range(4):
-                    if i != j:
-                        unseen_set.update(hands[j])
-                        
-                X_batch[idx, :12] = board_features[:12]
-                X_batch[idx, 12] = max_bullheads
-                X_batch[idx, 13] = min_bullheads
-                X_batch[idx, 14] = turn_number
-                
-                sorted_hand = sorted(hand)
-                for slot in range(10):
-                    base_idx = 15 + slot * 10
-                    if slot < len(sorted_hand):
-                        card = sorted_hand[slot]
-                        c_bullheads = self.bullhead_lookup[card]
-                        
-                        target_row_idx = -1
-                        max_val = -1
-                        for r in range(4):
-                            val = row_tops[r]
-                            if val < card and val > max_val:
-                                max_val = val
-                                target_row_idx = r
-                                
-                        if target_row_idx != -1:
-                            is_under_board = 0
-                            target_tail = row_tops[target_row_idx]
-                            dist_to_target = card - target_tail
-                            
-                            unseen_in_gap = sum(1 for uc in unseen_set if target_tail < uc < card)
-                            
-                            next_closest_row_idx = -1
-                            max_val2 = -1
-                            for r in range(4):
-                                val = row_tops[r]
-                                if val < card and val > max_val2 and r != target_row_idx:
-                                    max_val2 = val
-                                    next_closest_row_idx = r
-                            
-                            if next_closest_row_idx != -1:
-                                dist_to_next = card - row_tops[next_closest_row_idx]
-                            else:
-                                dist_to_next = 1000
-                                
-                            t_length = row_lengths[target_row_idx]
-                            t_bulls = row_bullheads[target_row_idx]
-                            cheap_avail = 0
-                            diff_to_lowest = 0
-                        else:
-                            is_under_board = 1
-                            dist_to_target = 1000
-                            unseen_in_gap = 1000
-                            dist_to_next = 1000
-                            t_length = 0
-                            t_bulls = 0
-                            
-                            cheap_avail = 1000
-                            for r in range(4):
-                                if row_bullheads[r] < cheap_avail:
-                                    cheap_avail = row_bullheads[r]
-                            if cheap_avail == 1000: cheap_avail = 0
-                            
-                            min_tail = min([top for top in row_tops if top > 0] + [1000])
-                            if min_tail != 1000:
-                                diff_to_lowest = min_tail - card
-                            else:
-                                diff_to_lowest = 0
-                                
-                        X_batch[idx, base_idx:base_idx+10] = [
-                            card, c_bullheads, is_under_board, dist_to_target,
-                            unseen_in_gap, dist_to_next, t_length, t_bulls,
-                            cheap_avail, diff_to_lowest
-                        ]
-                    else:
-                        X_batch[idx, base_idx:base_idx+10] = 0.0
-
     def _predict_proba(self, X):
         """
         Evaluate the batched feature matrix using the loaded Random Forest model.
@@ -272,7 +121,7 @@ class FlatMC:
         on scikit-learn.
 
         Args:
-            X (np.ndarray): Batched feature matrix of shape (batch_size, 115).
+            X (np.ndarray): Batched feature matrix of shape (batch_size, 143).
 
         Returns:
             np.ndarray: Probability distribution over the 10 sorted hand slots,
@@ -364,12 +213,27 @@ class FlatMC:
             # Evaluate every card in our hand using the RF model and keep
             # only the Top 3 most likely choices.  All simulation time is
             # then focused exclusively on these promising candidates.
-            X_batch = np.zeros((4, 115), dtype=np.float32)
-            dummy_games = [{
-                'board': board,
-                'hands': [hand, unseen_cards, [], []]
-            }]
-            self._extract_features_multi(dummy_games, X_batch)
+            # Use the robust 143-dim Deep CFR features.
+            h_scores = history.get('scores', [0,0,0,0]) if isinstance(history, dict) else [0,0,0,0]
+            h_round = history.get('round', 0) if isinstance(history, dict) else 0
+            h_history_matrix = history.get('history_matrix', []) if isinstance(history, dict) else []
+            h_score_history = history.get('score_history', []) if isinstance(history, dict) else []
+            h_board_history = history.get('board_history', []) if isinstance(history, dict) else []
+            
+            features_143 = extract_features(
+                board=board,
+                hand=hand,
+                unseen=set(unseen_cards),
+                scores=h_scores,
+                player_idx=self.player_idx,
+                round_num=h_round,
+                history_matrix=h_history_matrix,
+                score_history=h_score_history,
+                board_history=h_board_history,
+            )
+            
+            X_batch = np.zeros((1, 143), dtype=np.float32)
+            X_batch[0] = features_143
             
             probas = self._predict_proba(X_batch)[0]
             
@@ -438,57 +302,19 @@ class FlatMC:
                     'penalties': penalties
                 })
 
-            # ---- Phase 2: Mixed Rollout ----
-            # Roll out remaining tricks with a mixed strategy:
-            #   Depths 0–2: RF heuristic with ε-Greedy exploration.
-            #   Depth  3+ : Fast uniform random play (no RF overhead).
-            # This concentrates the expensive RF inference on the near-future
-            # where it matters most, while keeping the rollout diverse.
+            # ---- Phase 2: Pure Random Rollout ----
+            # Roll out remaining tricks with fast uniform random play.
+            # (RF heuristic is disabled during rollouts due to feature complexity).
             for depth in range(n_turns - 1):
-                if self.rf_model is not None and depth < 3:
-                    # RF-guided depths: build a single (4*|games|, 115) batch
-                    # and traverse all trees at once (vectorised NumPy SIMD call).
-                    X_batch = np.zeros((len(games) * 4, 115), dtype=np.float32)
-                    self._extract_features_multi(games, X_batch)
-                    probas_batch = self._predict_proba(X_batch)
-
-                    for g_idx, game in enumerate(games):
-                        pending_actions = []
-                        for i in range(4):
-                            idx = g_idx * 4 + i
-                            valid_cards = game['hands'][i]
-                            sorted_hand = sorted(valid_cards)
-                            
-                            p = probas_batch[idx].copy()
-                            valid_len = len(sorted_hand)
-                            p[valid_len:] = -1.0  # Mask out empty padding slots
-                            
-                            # ε-Greedy action selection (ε=0.10): with 10 % probability
-                            # choose a uniformly random legal card instead of the RF
-                            # argmax.  This prevents the rollout from overfitting to the
-                            # heuristic's own expectations and diversifies world sampling.
-                            if random.random() < 0.1:
-                                best_card = random.choice(sorted_hand)
-                            else:
-                                best_idx = int(np.argmax(p))
-                                best_card = sorted_hand[best_idx]
-                            
-                            game['hands'][i].remove(best_card)
-                            pending_actions.append((best_card, i))
-                        self._resolve_trick(game['board'], game['row_bullheads'], pending_actions, game['penalties'])
-                else:
-                    # Depth 3+: pure random play for all simulated players.
-                    # No feature extraction or tree traversal; each player
-                    # pops a random card from their remaining hand.
-                    for g_idx, game in enumerate(games):
-                        pending_actions = []
-                        for i in range(4):
-                            valid_cards = game['hands'][i]
-                            # Fast uniform random fallback
-                            idx = random.randrange(len(valid_cards))
-                            best_card = valid_cards.pop(idx)
-                            pending_actions.append((best_card, i))
-                        self._resolve_trick(game['board'], game['row_bullheads'], pending_actions, game['penalties'])
+                for g_idx, game in enumerate(games):
+                    pending_actions = []
+                    for i in range(4):
+                        valid_cards = game['hands'][i]
+                        # Fast uniform random fallback
+                        idx = random.randrange(len(valid_cards))
+                        best_card = valid_cards.pop(idx)
+                        pending_actions.append((best_card, i))
+                    self._resolve_trick(game['board'], game['row_bullheads'], pending_actions, game['penalties'])
                         
             # ---- Phase 3: Accumulate Results ----
             for game in games:
