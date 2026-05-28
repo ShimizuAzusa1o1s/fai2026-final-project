@@ -2,12 +2,6 @@
     "baselines": [
         [
             "src.players.TA.public_baselines2",
-            "Baseline8",
-            {},
-            "B8"
-        ],
-        [
-            "src.players.TA.public_baselines2",
             "Baseline9",
             {},
             "B9"
@@ -21,10 +15,16 @@
     ],
     "players": [
         [
-            "src.players.b12705048.agents.segment_mc_o1",
-            "SegmentMCo1",
+            "src.players.b12705048.agents.hybrid_lgbm_mc",
+            "HybridRankerMCo1",
             {},
-            "Seg-o1"
+            "Hybrid"
+        ],
+        [
+            "src.players.b12705048.agents.flat_mc_o1",
+            "FlatMCo1",
+            {},
+            "FMC-o1"
         ]
     ],
     "engine": {

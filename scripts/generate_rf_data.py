@@ -53,13 +53,13 @@ def generate_games(worker_id, num_games, time_limit):
     Returns:
         list[dict]: Collected state-action samples (one per FlatMCo1 turn).
     """
-    # Configure the four-player game: FlatMCo1 + three diverse opponents
+    # Configure the four-player game: 4x FlatMCo1 (Self-Play)
     config = {
         "players": [
             ["src.players.b12705048.agents.flat_mc_o1", "FlatMCo1"],
-            ["src.players.TA.public_baselines1", "Baseline5"],
-            ["src.players.TA.public_baselines2", "Baseline10"],
-            ["src.players.TA.random_player", "RandomPlayer"]
+            ["src.players.b12705048.agents.flat_mc_o1", "FlatMCo1"],
+            ["src.players.b12705048.agents.flat_mc_o1", "FlatMCo1"],
+            ["src.players.b12705048.agents.flat_mc_o1", "FlatMCo1"]
         ],
         "engine": {
             "n_players": 4,
@@ -98,20 +98,17 @@ def generate_games(worker_id, num_games, time_limit):
                 "score_history": engine.score_history,
             }
 
-            # Snapshot FlatMCo1's state BEFORE any player acts this round
-            p0_hand = engine.hands[0].copy()
-            p0_board = [row.copy() for row in engine.board]
-            
-            p0_scores = engine.scores.copy()
-            p0_round = engine.round
-            p0_history_matrix = [r.copy() for r in engine.history_matrix]
-            p0_score_history = [s.copy() for s in engine.score_history]
-            p0_board_history = [[r.copy() for r in b] for b in engine.board_history]
+            # Snapshot state BEFORE any player acts this round
+            p_board = [row.copy() for row in engine.board]
+            p_scores = engine.scores.copy()
+            p_round = engine.round
+            p_history_matrix = [r.copy() for r in engine.history_matrix]
+            p_score_history = [s.copy() for s in engine.score_history]
+            p_board_history = [[r.copy() for r in b] for b in engine.board_history]
 
-            # Compute the set of unseen cards (not on board, not in hand) so
-            # that the RF can estimate interception risk during feature extraction
+            # Compute the set of globally visible cards
             visible_cards = set()
-            for row in p0_board:
+            for row in p_board:
                 visible_cards.update(row)
             for past_round in engine.history_matrix:
                 visible_cards.update(past_round)
@@ -119,30 +116,32 @@ def generate_games(worker_id, num_games, time_limit):
                 for row in board_hist:
                     visible_cards.update(row)
 
-            unseen_cards = list(set(range(1, 105)) - visible_cards - set(p0_hand))
-
-            # Collect actions from all players, recording only FlatMCo1's decision
+            # Collect actions from all players, recording all decisions
             round_actions = [0] * engine.n_players
             round_flags = [False] * engine.n_players
             current_played_cards = []
 
             for p_idx, player in enumerate(engine.players):
                 hand = engine.hands[p_idx]
+                
+                # Snapshot hand and compute unseen cards for this specific player
+                p_hand = hand.copy()
+                unseen_cards = list(set(range(1, 105)) - visible_cards - set(p_hand))
+                
                 played_card = player.action(hand.copy(), copy.deepcopy(history_state))
 
-                if p_idx == 0:
-                    # Record the (state, action) pair for the training set
-                    collected_data.append({
-                        "board": p0_board,
-                        "hand": p0_hand,
-                        "unseen_cards": unseen_cards,
-                        "scores": p0_scores,
-                        "round_num": p0_round,
-                        "history_matrix": p0_history_matrix,
-                        "score_history": p0_score_history,
-                        "board_history": p0_board_history,
-                        "action": played_card
-                    })
+                # Record the (state, action) pair for the training set
+                collected_data.append({
+                    "board": p_board,
+                    "hand": p_hand,
+                    "unseen_cards": unseen_cards,
+                    "scores": p_scores,
+                    "round_num": p_round,
+                    "history_matrix": p_history_matrix,
+                    "score_history": p_score_history,
+                    "board_history": p_board_history,
+                    "action": played_card
+                })
 
                 hand.remove(played_card)
                 current_played_cards.append((played_card, p_idx))
@@ -164,7 +163,7 @@ def generate_games(worker_id, num_games, time_limit):
 
 if __name__ == "__main__":
     print("Starting data generation for Random Forest...")
-    num_games_total = 5000
+    num_games_total = 1000
     time_limit = 0.1
     num_workers = 8
 
