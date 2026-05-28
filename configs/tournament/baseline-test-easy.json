@@ -21,10 +21,10 @@
     ],
     "players": [
         [
-            "src.players.b12705048.archive.rf_player",
-            "RFPlayer",
+            "src.players.b12705048.sdcfr.sdcfr_player",
+            "SDCFRPlayer",
             {},
-            "RF"
+            "SDCFR"
         ]
     ],
     "engine": {
