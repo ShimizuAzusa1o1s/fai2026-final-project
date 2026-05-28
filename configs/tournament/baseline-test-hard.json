@@ -21,10 +21,10 @@
     ],
     "players": [
         [
-            "src.players.b12705048.agents.ucb_rf_mc_o1",
-            "UCB_RF_MCo1",
+            "src.players.b12705048.agents.segment_mc_o1",
+            "SegmentMCo1",
             {},
-            "UCB-o1"
+            "Seg-o1"
         ]
     ],
     "engine": {

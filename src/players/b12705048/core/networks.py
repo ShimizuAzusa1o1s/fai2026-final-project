@@ -54,6 +54,46 @@ class AdvantageNetwork(nn.Module):
         return self.net(x)
 
 
+class StrategyNetwork(nn.Module):
+    """
+    MLP that predicts the average strategy probabilities for each hand slot.
+
+    Architecture::
+
+        Input(143) → Linear(256) → ReLU → LayerNorm
+                   → Linear(256) → ReLU → LayerNorm
+                   → Linear(128) → ReLU
+                   → Linear(10)
+
+    ~130 K parameters.  Forward pass < 0.1 ms on CPU.
+    """
+
+    def __init__(self, input_dim: int = 143, hidden_dim: int = 256, output_dim: int = 10):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 2, output_dim),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass to compute logits, usually followed by softmax.
+
+        Args:
+            x (torch.Tensor): Feature tensor of shape ``(batch, 143)``.
+        
+        Returns:
+            torch.Tensor: Logits for the strategy of shape ``(batch, 10)``.
+        """
+        return self.net(x)
+
+
 # ── Regret Matching ────────────────────────────────────────────────────────
 
 

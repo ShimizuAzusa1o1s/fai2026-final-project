@@ -83,27 +83,23 @@ class ReservoirBuffer:
     # ── Sampling ───────────────────────────────────────────────────────────
 
     def sample(self, batch_size: int):
-        """Return a weighted random batch.
+        """Return a uniformly random batch from the reservoir.
 
-        Sampling weight = ``iteration²`` (later iterations are more
-        important, per the SDCFR theory).
+        Args:
+            batch_size (int): The number of samples to return.
 
         Returns:
-            ``(features, advantages, iterations)`` — NumPy arrays of shape
+            tuple: ``(features, advantages, iterations)`` — NumPy arrays of shape
             ``(batch_size, dim)``, or ``None`` if the buffer is empty.
         """
         if self.size == 0:
             return None
 
         actual = min(batch_size, self.size)
-        weights = self.iterations[: self.size] ** 2
-        total_w = weights.sum()
-        if total_w > 0:
-            probs = weights / total_w
-        else:
-            probs = np.ones(self.size, dtype=np.float64) / self.size
-
-        indices = np.random.choice(self.size, size=actual, replace=True, p=probs)
+        
+        # Uniform sampling (avoiding double weighting since loss is weighted by iteration)
+        indices = np.random.choice(self.size, size=actual, replace=False)
+        
         return (
             self.features[indices],
             self.advantages[indices],
