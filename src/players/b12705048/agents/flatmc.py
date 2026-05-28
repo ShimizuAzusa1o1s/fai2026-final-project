@@ -31,7 +31,7 @@ import time
 import random
 import numpy as np
 
-class FlatMCo1:
+class FlatMC:
     """
     Vectorized 1-ply Monte Carlo agent for 6 Nimmt!.
 
@@ -56,7 +56,7 @@ class FlatMCo1:
             player_idx (int): The player's seat index in the game (0–3).
         """
         self.player_idx = player_idx
-        self.time_limit = 0.90
+        self.time_limit = 0.1
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
 

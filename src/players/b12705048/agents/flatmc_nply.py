@@ -3,7 +3,7 @@ Flat Monte Carlo (N-Ply) Player Module — Vectorized SoA Variant.
 
 This module implements a high-throughput N-ply Monte Carlo agent for 6 Nimmt!
 using a Structure of Arrays (SoA) architecture and NumPy SIMD batch execution.
-It extends the 1-ply and 2-ply approaches by evaluating sequences of N actions
+It extends the 1-ply approach by evaluating sequences of N actions
 and finding the best immediate action assuming the subsequent best responses.
 
 Algorithm:
@@ -25,7 +25,7 @@ import random
 import numpy as np
 import itertools
 
-class FlatMCoN:
+class FlatMCNPly:
     """
     Vectorized N-ply Monte Carlo agent for 6 Nimmt!.
 
@@ -41,7 +41,7 @@ class FlatMCoN:
         bullhead_lookup (np.ndarray): O(1) bullhead penalty lookup array.
     """
 
-    def __init__(self, player_idx, n_ply=2):
+    def __init__(self, player_idx, n_ply=3):
         """
         Initialize the Vectorized N-Ply Flat Monte Carlo player.
 

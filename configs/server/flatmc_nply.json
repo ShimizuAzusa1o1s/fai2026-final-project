@@ -5,8 +5,8 @@
     "password": "LaoWang1015@@",
     "label": "Abyssinian",
     "player": {
-        "path": "src.players.b12705048.agents.flat_mc_o2",
-        "class": "FlatMCo2",
+        "path": "src.players.b12705048.agents.flatmc_nply",
+        "class": "FlatMCNPly",
         "args": {}
     }
 }

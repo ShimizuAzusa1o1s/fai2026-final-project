@@ -15,16 +15,16 @@
     ],
     "players": [
         [
-            "src.players.b12705048.agents.hybrid_lgbm_mc",
-            "HybridRankerMCo1",
+            "src.players.b12705048.agents.flatmc",
+            "FlatMC",
             {},
-            "Hybrid"
+            "P1"
         ],
         [
-            "src.players.b12705048.agents.flat_mc_o1",
-            "FlatMCo1",
+            "src.players.b12705048.agents.flatmc_nply",
+            "FlatMCNPly",
             {},
-            "FMC-o1"
+            "P2"
         ]
     ],
     "engine": {

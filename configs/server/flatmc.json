@@ -5,8 +5,8 @@
     "password": "LaoWang1015@@",
     "label": "ScottishFoldE2",
     "player": {
-        "path": "src.players.b12705048.agents.flat_mc_o1",
-        "class": "FlatMCo1",
+        "path": "src.players.b12705048.agents.flatmc",
+        "class": "FlatMC",
         "args": {}
     }
 }

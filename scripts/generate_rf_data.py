@@ -56,10 +56,10 @@ def generate_games(worker_id, num_games, time_limit):
     # Configure the four-player game: 4x FlatMCo1 (Self-Play)
     config = {
         "players": [
-            ["src.players.b12705048.agents.flat_mc_o1", "FlatMCo1"],
-            ["src.players.b12705048.agents.flat_mc_o1", "FlatMCo1"],
-            ["src.players.b12705048.agents.flat_mc_o1", "FlatMCo1"],
-            ["src.players.b12705048.agents.flat_mc_o1", "FlatMCo1"]
+            ["src.players.b12705048.agents.flatmc", "FlatMC"],
+            ["src.players.b12705048.agents.flatmc", "FlatMC"],
+            ["src.players.b12705048.agents.flatmc", "FlatMC"],
+            ["src.players.b12705048.agents.flatmc", "FlatMC"]
         ],
         "engine": {
             "n_players": 4,
