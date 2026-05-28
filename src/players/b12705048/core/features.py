@@ -5,6 +5,15 @@ This module is the **single source of truth** for the SDCFR feature vector.
 Both ``FastGame.get_info_set_features()`` and ``SDCFRPlayer._extract_features()``
 delegate to :func:`extract_features` defined here.
 
+Algorithm:
+    - Extracts 143-dimensional normalised state representation for SDCFR and RF models.
+
+Characteristics:
+    - **Normalization**: Clamped and normalized so every feature lies in approximately [-1, 1].
+
+See Also:
+    ``fast_game.py`` — Simulator passing the game state here.
+
 Feature Layout (143 dimensions):
     [  0– 11]  Board: 4 rows × (length/5, top/104, penalty/28)
     [    12]   Max row bullheads / 28

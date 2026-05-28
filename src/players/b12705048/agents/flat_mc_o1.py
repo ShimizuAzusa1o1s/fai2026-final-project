@@ -93,7 +93,7 @@ class FlatMCo1:
         """
         start_time = time.perf_counter()
 
-        # Parse history
+        # ---- Phase 1: State Parsing ----
         if isinstance(history, dict):
             board = history.get('board', [])
         else:
@@ -132,6 +132,7 @@ class FlatMCo1:
             if actual_batch_size == 0:
                 break
 
+            # ---- Phase 2: Batch Initialization & Deal ----
             # Initialize SoA arrays for the batch
             tails = np.tile(orig_tails, (actual_batch_size, 1))
             lengths = np.tile(orig_lengths, (actual_batch_size, 1))
@@ -176,7 +177,7 @@ class FlatMCo1:
 
                 c_idx += 1
 
-            # Simulate n_turns synchronously across all games
+            # ---- Phase 3: SIMD Batch Simulation Loop ----
             for t in range(n_turns):
                 played_cards = hands_array[:, :, t]
 
@@ -234,7 +235,7 @@ class FlatMCo1:
                         tails[b_nc, target_rows[nc]] = current_cards[nc]
                         rbulls[b_nc, target_rows[nc]] += card_bulls[nc]
 
-            # Aggregate stats
+            # ---- Phase 4: Stat Aggregation ----
             c_idx = 0
             for c in candidates:
                 start_b = c_idx * sims_per_cand

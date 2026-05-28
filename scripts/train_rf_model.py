@@ -5,7 +5,7 @@ Usage:
     python scripts/train_rf_model.py [--data PATH] [--out PATH] [--estimators N]
 
 This script loads game-state samples collected by ``generate_rf_data.py``,
-extracts **115-dimensional** feature vectors (Deep CFR format), trains a ``scikit-learn``
+extracts **143-dimensional** feature vectors (Deep CFR format), trains a ``scikit-learn``
 ``RandomForestClassifier``, and exports the fitted trees to a compressed
 NumPy ``.npz`` file that can be loaded at inference time without
 scikit-learn.
@@ -63,7 +63,7 @@ if __name__ == "__main__":
             history_matrix=sample["history_matrix"],
             score_history=sample["score_history"],
             board_history=sample["board_history"]
-        )[:115]
+        )
         X.append(features)
         
         # Target variable is the index (0-9) of the played card in the sorted hand

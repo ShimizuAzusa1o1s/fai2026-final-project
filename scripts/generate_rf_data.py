@@ -164,8 +164,8 @@ def generate_games(worker_id, num_games, time_limit):
 
 if __name__ == "__main__":
     print("Starting data generation for Random Forest...")
-    num_games_total = 1000
-    time_limit = 0.5
+    num_games_total = 5000
+    time_limit = 0.1
     num_workers = 8
 
     games_per_worker = num_games_total // num_workers

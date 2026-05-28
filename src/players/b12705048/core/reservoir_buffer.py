@@ -4,6 +4,17 @@ Reservoir Sampling Memory Buffer for SDCFR.
 Stores ``(features, advantages, iteration)`` tuples in a fixed-capacity
 buffer.  When full, new entries replace old ones with probability
 ``capacity / n_seen`` (classic reservoir sampling).
+
+Algorithm:
+    - Classic reservoir sampling to maintain a uniform subset.
+    - Samples are weighted by `iteration^2` during retrieval.
+
+Characteristics:
+    - **Capacity**: Fixed size memory allocation.
+    - **Batching**: Allows batched insertions and samples.
+
+See Also:
+    ``train_sdcfr.py`` — Uses this buffer during self-play.
 """
 
 import numpy as np

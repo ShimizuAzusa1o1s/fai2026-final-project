@@ -6,7 +6,7 @@ This module implements the final, highest-quality agent architecture for
 root node with a trained Random Forest opponent model during rollouts.
 
 Algorithm:
-    1. **Action Pruning** — Evaluate the full hand using the 115-dim RF model
+    1. **Action Pruning** — Evaluate the full hand using the 143-dim RF model
        and retain only the Top 4 candidates, focusing compute on the most
        promising plays.
     2. **UCB Selection** — At each iteration, choose the candidate that
@@ -35,6 +35,10 @@ Characteristics:
 See Also:
     ``rf_flat_mc.py`` — RF-pruned FlatMC without UCB (simpler, faster).
     ``flat_mc.py``    — Pure-Python unbiased baseline.
+
+Notice:
+    This agent is under construction. Not all feature helps the performance
+    and hence further experiment is needed.
 """
 
 import time
@@ -121,7 +125,7 @@ class UCB_RF_MCo1:
         compute class probabilities for each sample without scikit-learn.
 
         Args:
-            X (np.ndarray): Batched feature matrix of shape ``(batch, 115)``.
+            X (np.ndarray): Batched feature matrix of shape ``(batch, 143)``.
 
         Returns:
             np.ndarray: Probability distribution over the 10 sorted hand
@@ -217,7 +221,7 @@ class UCB_RF_MCo1:
         # ---- 2. Action Pruning: Keep Top 4 ----
         candidates = hand
         if self.rf_model is not None and len(candidates) > 4:
-            features_115 = extract_features(
+            features_143 = extract_features(
                 board=board,
                 hand=hand,
                 unseen=set(unseen_cards),
@@ -227,9 +231,9 @@ class UCB_RF_MCo1:
                 history_matrix=h_history_matrix,
                 score_history=h_score_history,
                 board_history=h_board_history,
-            )[:115]
-            X_batch = np.zeros((1, 115), dtype=np.float32)
-            X_batch[0] = features_115
+            )
+            X_batch = np.zeros((1, 143), dtype=np.float32)
+            X_batch[0] = features_143
             probas = self._predict_proba(X_batch)[0]
 
             sorted_hand = sorted(hand)
@@ -327,7 +331,7 @@ class UCB_RF_MCo1:
             for depth in range(n_turns - 1):
                 if self.rf_model is not None and depth < self.rf_depth:
                     # RF-guided depths: batch all players across all games
-                    X_batch = np.zeros((len(games) * 4, 115), dtype=np.float32)
+                    X_batch = np.zeros((len(games) * 4, 143), dtype=np.float32)
                     sim_round = h_round + 1 + depth
 
                     for g_idx, game in enumerate(games):
@@ -350,7 +354,7 @@ class UCB_RF_MCo1:
                                 history_matrix=game['history_matrix'],
                                 score_history=game['score_history'],
                                 board_history=game['board_history']
-                            )[:115]
+                            )
                             X_batch[idx] = features
 
                     probas_batch = self._predict_proba(X_batch)

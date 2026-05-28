@@ -6,6 +6,22 @@ using a Structure of Arrays (SoA) architecture and NumPy SIMD batch execution.
 It extends the 1-ply approach by evaluating pairs of (current_turn, next_turn)
 actions for the agent and finding the best immediate action assuming the
 subsequent best response.
+
+Algorithm:
+    1. Build SoA arrays for ``batch_size`` independent games.
+    2. Enumerate all valid 2-ply action pairs `(c1, c2)` for the agent.
+    3. Randomly assign unseen cards to opponents via vectorized argsort.
+    4. Simulate all ``n_turns`` tricks simultaneously via SIMD operations.
+    5. Aggregate penalties and use minimax logic to select the best `c1`.
+
+Characteristics:
+    - **Depth**: 2-ply (evaluates current and next action).
+    - **Rollout Policy**: Pure uniform random for all players.
+    - **SIMD Batching**: Highly vectorized game simulation for large throughput.
+    - **Time Management**: Repeats batches until time expires.
+
+See Also:
+    ``flat_mc_o1.py`` — 1-Ply vectorized counterpart.
 """
 
 import time
@@ -72,7 +88,7 @@ class FlatMCo2:
         if n_turns == 1:
             return hand[0]
 
-        # Parse history
+        # ---- Phase 1: State Parsing ----
         if isinstance(history, dict):
             board = history.get('board', [])
         else:
@@ -116,6 +132,7 @@ class FlatMCo2:
             if actual_batch_size == 0:
                 break
 
+            # ---- Phase 2: Batch Initialization & Deal ----
             # Initialize SoA arrays for the batch
             tails = np.tile(orig_tails, (actual_batch_size, 1))
             lengths = np.tile(orig_lengths, (actual_batch_size, 1))
@@ -158,7 +175,7 @@ class FlatMCo2:
 
                 c_idx += 1
 
-            # Simulate n_turns synchronously across all games
+            # ---- Phase 3: SIMD Batch Simulation Loop ----
             for t in range(n_turns):
                 played_cards = hands_array[:, :, t]
 
@@ -216,7 +233,7 @@ class FlatMCo2:
                         tails[b_nc, target_rows[nc]] = current_cards[nc]
                         rbulls[b_nc, target_rows[nc]] += card_bulls[nc]
 
-            # Aggregate stats
+            # ---- Phase 4: Stat Aggregation ----
             c_idx = 0
             for pair in candidates:
                 start_b = c_idx * sims_per_cand
@@ -227,7 +244,8 @@ class FlatMCo2:
                 stats_visits[pair] += sims_per_cand
                 c_idx += 1
 
-        # 2-Ply Aggregation: score(c1) = min_{c2} (avg_penalty(c1, c2))
+        # ---- Phase 5: 2-Ply Minimax Aggregation ----
+        # score(c1) = min_{c2} (avg_penalty(c1, c2))
         best_c1 = None
         best_c1_score = float('inf')
 

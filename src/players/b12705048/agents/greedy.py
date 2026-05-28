@@ -1,24 +1,21 @@
 """
 Greedy Baseline Player Module.
 
-This module implements two deterministic baseline strategies for 6 Nimmt!:
+This module implements two deterministic baseline strategies for 6 Nimmt!
+that ignore the board state entirely and serve as simple reference
+points for benchmarking more sophisticated decision-making algorithms.
 
+Algorithm:
     1. **Minimizer** — Always plays the smallest card in hand.
     2. **Maximizer** — Always plays the largest card in hand.
 
-These agents ignore the board state entirely and serve as simple reference
-points for benchmarking more sophisticated decision-making algorithms.
-Any competitive agent should consistently outperform both baselines in
-tournament evaluations.
+Characteristics:
+    - **Depth**: 0-ply (deterministic rule).
+    - **Minimizer**: Conservatively plays low cards first, preserving high cards.
+    - **Maximizer**: Aggressively plays high cards first.
 
-Strategic Properties:
-    - **Minimizer**: Conservatively plays low cards first, preserving high
-      cards for later rounds where they are more likely to find safe
-      placements. However, early low-card plays risk triggering the Low
-      Card Rule (forced row take when the card is below all row tails).
-    - **Maximizer**: Aggressively plays high cards first, which usually
-      find valid placements but risks exhausting high-value cards early,
-      leaving only dangerous low cards for the endgame.
+See Also:
+    ``flat_mc_o1.py`` — First step up in complexity (1-ply random search).
 """
 
 

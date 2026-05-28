@@ -4,6 +4,17 @@ PyTorch Advantage Network and utilities for SDCFR.
 The network maps a 143-dim information-set feature vector to a 10-dim
 advantage vector (one value per possible hand slot).  At inference time,
 advantages are converted to an action strategy via regret matching.
+
+Algorithm:
+    - Neural Network mapping features to counterfactual advantages.
+    - Regret matching converts advantages to action probabilities.
+
+Characteristics:
+    - **Architecture**: 3-layer MLP with LayerNorm.
+    - **Performance**: ~130 K parameters, forward pass < 0.1 ms on CPU.
+
+See Also:
+    ``features.py`` — Provides the 143-dim input.
 """
 
 import numpy as np

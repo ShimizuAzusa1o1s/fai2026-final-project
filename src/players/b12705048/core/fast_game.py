@@ -1,10 +1,21 @@
 """
-Fast 6 Nimmt! Game Simulator for SDCFR Training.
+Fast 6 Nimmt! Game Simulator.
 
-A stripped-down game engine optimised for millions of CFR traversals.
+A stripped-down game engine optimised for millions of CFR/MCTS traversals.
 No timeouts, no signals, no verbose logging, no deep-copy of history to
-players.  Tracks only the minimal state needed for feature extraction and
+players. Tracks only the minimal state needed for feature extraction and
 round resolution.
+
+Core Mechanism:
+    - Highly optimized internal state mutations.
+    - Resolves rounds strictly according to 6 Nimmt! rules.
+
+Characteristics:
+    - **Performance**: Zero-allocation during `resolve_round` (mostly).
+    - **State Tracking**: Maintains history needed for feature extraction.
+
+See Also:
+    ``features.py`` — Relies on this game state for feature generation.
 """
 
 import random
@@ -49,7 +60,14 @@ class FastGame:
 
     @staticmethod
     def deal_random(rng: random.Random) -> "FastGame":
-        """Deal a fresh 4-player game using *rng* for shuffling."""
+        """Deal a fresh 4-player game using *rng* for shuffling.
+        
+        Args:
+            rng (random.Random): Random number generator for shuffling.
+            
+        Returns:
+            FastGame: A newly dealt game state.
+        """
         game = FastGame()
         deck = list(range(1, 105))
         rng.shuffle(deck)
@@ -73,7 +91,11 @@ class FastGame:
     # ── Copying ────────────────────────────────────────────────────────────
 
     def clone(self) -> "FastGame":
-        """Return a cheap copy suitable for independent rollout."""
+        """Return a cheap copy suitable for independent rollout.
+        
+        Returns:
+            FastGame: An independent copy of the game state.
+        """
         g = FastGame()
         g.board = [row[:] for row in self.board]
         g.hands = [h[:] for h in self.hands]
@@ -95,10 +117,11 @@ class FastGame:
         """Resolve a simultaneous round.
 
         Args:
-            actions: ``{player_idx: card_value}`` for all 4 players.
+            actions (dict[int, int]): ``{player_idx: card_value}`` for all 4 players.
 
-        Modifies ``board``, ``hands``, ``scores``, ``history_matrix``,
-        ``score_history``, and ``board_history`` **in-place**.
+        Returns:
+            None: Modifies ``board``, ``hands``, ``scores``, ``history_matrix``,
+            ``score_history``, and ``board_history`` **in-place**.
         """
         # Snapshot board *before* this round
         self.board_history.append([row[:] for row in self.board])
@@ -157,6 +180,12 @@ class FastGame:
         Delegates to :func:`features.extract_features`, computing the
         unseen-card set from the information-set-consistent visible cards
         (board + history + initial board — **not** opponent hands).
+        
+        Args:
+            player_idx (int): The index of the player to generate features for.
+            
+        Returns:
+            np.ndarray: The 143-dimensional feature array.
         """
         unseen = compute_unseen_cards(
             self.hands[player_idx],

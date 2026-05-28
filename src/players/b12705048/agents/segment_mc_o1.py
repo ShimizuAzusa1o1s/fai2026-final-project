@@ -167,6 +167,7 @@ class SegmentMCo1:
     def action(self, hand, history):
         start_time = time.perf_counter()
 
+        # ---- Phase 1: State Parsing ----
         if isinstance(history, dict):
             board = history.get('board', [])
         else:
@@ -190,6 +191,8 @@ class SegmentMCo1:
         stats_visits = {c: 0 for c in hand}
 
         tails = sorted([row[-1] for row in board])
+        
+        # ---- Phase 2: History Analysis & Pool Generation ----
         weights = self._analyze_history(history)
 
         # Pre-generate biased opponent hands (converted to NumPy array)
@@ -217,6 +220,7 @@ class SegmentMCo1:
             if actual_batch_size == 0:
                 break
 
+            # ---- Phase 3: Batch Initialization & Deal ----
             b_tails = np.tile(orig_tails, (actual_batch_size, 1))
             b_lengths = np.tile(orig_lengths, (actual_batch_size, 1))
             b_rbulls = np.tile(orig_rbulls, (actual_batch_size, 1))
@@ -246,6 +250,7 @@ class SegmentMCo1:
 
                 c_idx += 1
 
+            # ---- Phase 4: SIMD Batch Simulation Loop ----
             for t in range(n_turns):
                 played_cards = hands_array[:, :, t]
                 sort_idx = np.argsort(played_cards, axis=1)
@@ -288,6 +293,7 @@ class SegmentMCo1:
                         b_tails[b_nc, target_rows[nc]] = current_cards[nc]
                         b_rbulls[b_nc, target_rows[nc]] += card_bulls[nc]
 
+            # ---- Phase 5: Stat Aggregation ----
             c_idx = 0
             for c in candidates:
                 start_b = c_idx * sims_per_cand
