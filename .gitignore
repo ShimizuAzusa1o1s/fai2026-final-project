@@ -3,3 +3,6 @@ results
 
 # Local Config Files
 .*
+
+# RL Agent Models: Ignore intermediate checkpoints but track final stage models
+models/ppo_agent/*_steps.zip
