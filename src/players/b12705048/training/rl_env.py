@@ -50,6 +50,9 @@ class SixNimmtEnv(gym.Env):
             if self.opponent_type == "flatmc":
                 opp = FlatMC(player_idx=i)
                 opp.time_limit = self.opponent_time_limit
+                # Reduce batch size for short time budgets to prevent massive overshoots
+                if self.opponent_time_limit <= 0.05:
+                    opp.batch_size = 500
             elif self.opponent_type == "minimizer":
                 opp = Minimizer(player_idx=i)
             else:

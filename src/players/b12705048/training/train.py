@@ -1,5 +1,19 @@
 import os
+import sys
 import time
+
+# Set thread count to 1 to prevent massive CPU thread contention when running 16 envs
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
+# Automatically add the project root to sys.path so 'src' can be resolved
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, "../../../../"))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.env_util import make_vec_env
@@ -125,4 +139,4 @@ def train_agent(test_mode=True):
     env_stage3.close()
 
 if __name__ == "__main__":
-    train_agent(test_mode=True)
+    train_agent(test_mode=False)
