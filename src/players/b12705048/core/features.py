@@ -54,10 +54,10 @@ BULLHEADS: tuple[int, ...] = tuple(_BULLHEADS)
 # Normalization constants
 _MAX_CARD = 104.0
 _MAX_ROW_LEN = 5.0
-_MAX_ROW_BH = 28.0       # Theoretical max bullheads in a single 5-card row
+_MAX_ROW_BH = 28.0        # Theoretical max bullheads in a single 5-card row
 _MAX_BH_CARD = 7.0        # Card 55
 _MAX_SCORE_NORM = 66.0    # Reasonable upper-bound for normalizing scores
-_MAX_GAP = 100.0           # Cap for "unseen cards in gap"
+_MAX_GAP = 100.0          # Cap for "unseen cards in gap"
 
 
 def extract_features(

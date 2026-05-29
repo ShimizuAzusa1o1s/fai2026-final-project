@@ -4,7 +4,7 @@ Training Script for the FlatMCo1 Random Forest Rollout Policy.
 Usage:
     python scripts/train_rf_model.py [--data PATH] [--out PATH] [--estimators N]
 
-This script loads game-state samples collected by ``generate_rf_data.py``,
+This script loads game-state samples collected by ``generate_dataset.py``,
 extracts **143-dimensional** feature vectors (Deep CFR format), trains a ``scikit-learn``
 ``RandomForestClassifier``, and exports the fitted trees to a compressed
 NumPy ``.npz`` file that can be loaded at inference time without
@@ -30,7 +30,7 @@ from src.players.b12705048.core.features import extract_features
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", type=str, default="results/rf_data.pkl")
+    parser.add_argument("--data", type=str, default="results/dataset.pkl")
     parser.add_argument("--out", type=str, default="src/players/b12705048/agents/rf_model.npz")
     parser.add_argument("--estimators", type=int, default=50)
     args = parser.parse_args()

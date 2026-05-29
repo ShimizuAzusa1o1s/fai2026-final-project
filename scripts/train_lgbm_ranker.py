@@ -1,7 +1,7 @@
 """
 Training Script for the LightGBM LambdaMART Ranker.
 
-This script loads game-state samples collected by ``generate_rf_data.py``,
+This script loads game-state samples collected by ``generate_dataset.py``,
 extracts point-wise features (State + Candidate Card), groups them into queries,
 trains a LightGBM Ranker (lambdarank objective), and exports the trees
 into a NumPy ``.npz`` format for pure-NumPy vectorised inference.
@@ -86,7 +86,7 @@ def parse_lgbm_tree_to_numpy(model, out_path="src/players/b12705048/agents/lgbm_
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", type=str, default="results/rf_data.pkl")
+    parser.add_argument("--data", type=str, default="results/dataset.pkl")
     parser.add_argument("--out", type=str, default="src/players/b12705048/agents/lgbm_model.npz")
     parser.add_argument("--estimators", type=int, default=100)
     args = parser.parse_args()

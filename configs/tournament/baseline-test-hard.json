@@ -21,8 +21,8 @@
             "P1"
         ],
         [
-            "src.players.b12705048.agents.flatmc_nply",
-            "FlatMCNPly",
+            "src.players.b12705048.agents.flatmc_nn",
+            "FlatMCNN",
             {},
             "P2"
         ]

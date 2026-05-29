@@ -31,7 +31,7 @@ FEATURE_NAMES = [
 ]
 
 def main():
-    data_path = "results/rf_data.pkl"
+    data_path = "results/dataset.pkl"
     print(f"Loading data from {data_path}...")
     with open(data_path, "rb") as f:
         data = pickle.load(f)
