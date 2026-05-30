@@ -19,7 +19,7 @@ See Also:
 """
 
 import random
-from src.players.b12705048.core.features import (
+from src.players.b12705048.core.features_143 import (
     BULLHEADS, N_FEATURES, extract_features, compute_unseen_cards,
 )
 

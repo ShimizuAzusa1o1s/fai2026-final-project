@@ -21,8 +21,8 @@
             "P1"
         ],
         [
-            "src.players.b12705048.agents.hybrid",
-            "HybridPlayer",
+            "src.players.b12705048.agents.rl_agent",
+            "RLAgent",
             {},
             "P2"
         ]

@@ -2,12 +2,6 @@
     "baselines": [
         [
             "src.players.TA.public_baselines1",
-            "Baseline3",
-            {},
-            "B3"
-        ],
-        [
-            "src.players.TA.public_baselines1",
             "Baseline4",
             {},
             "B4"
@@ -21,10 +15,16 @@
     ],
     "players": [
         [
-            "src.players.b12705048.sdcfr.sdcfr_player",
-            "SDCFRPlayer",
+            "src.players.b12705048.agents.flatmc",
+            "FlatMC",
             {},
-            "SDCFR"
+            "P1"
+        ],
+        [
+            "src.players.b12705048.agents.rl_agent",
+            "RLAgent",
+            {},
+            "P2"
         ]
     ],
     "engine": {

@@ -20,7 +20,7 @@ import torch
 torch.set_num_threads(1)
 from sb3_contrib import MaskablePPO
 
-from src.players.b12705048.core.features import extract_features, compute_unseen_cards
+from src.players.b12705048.core.features_143 import extract_features, compute_unseen_cards
 
 class RLAgent:
     """
@@ -45,7 +45,7 @@ class RLAgent:
         
         if model_path is None:
             base_dir = os.path.dirname(os.path.abspath(__file__))
-            model_path = os.path.join(base_dir, "stage3_model_final")
+            model_path = os.path.join(base_dir, "models", "rl_model_143_stage3")
 
         self.model = None
         if os.path.exists(f"{model_path}.zip"):
