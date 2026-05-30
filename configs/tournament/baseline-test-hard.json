@@ -21,8 +21,8 @@
             "P1"
         ],
         [
-            "src.players.b12705048.agents.flatmc_nn",
-            "FlatMCNN",
+            "src.players.b12705048.agents.hybrid",
+            "HybridPlayer",
             {},
             "P2"
         ]

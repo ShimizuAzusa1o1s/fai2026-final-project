@@ -54,15 +54,17 @@ class SixNimmtEnv(gym.Env):
         observation_space (spaces.Box): The 143-dimensional normalized feature vector.
         opponent_type (str): The type of opponents to spawn ("minimizer" or "flatmc").
         opponent_time_limit (float): The time budget for FlatMC opponents.
+        opponent_model_path (str | None): Path to the RLAgent model if using older selves.
         my_idx (int): The seat index of the RL agent (fixed at 0).
     """
-    def __init__(self, opponent_type="minimizer", opponent_time_limit=0.01):
+    def __init__(self, opponent_type="minimizer", opponent_time_limit=0.01, opponent_model_path=None):
         """
         Initialize the SixNimmt environment.
 
         Args:
-            opponent_type (str): Opponent type to spawn ("minimizer" or "flatmc").
+            opponent_type (str): Opponent type to spawn ("minimizer", "flatmc", or "rl_agent").
             opponent_time_limit (float): Time budget for FlatMC opponents in seconds.
+            opponent_model_path (str | None): Model path for RLAgent opponents.
         """
         super().__init__()
         
@@ -71,6 +73,7 @@ class SixNimmtEnv(gym.Env):
         
         self.opponent_type = opponent_type
         self.opponent_time_limit = opponent_time_limit
+        self.opponent_model_path = opponent_model_path
         self.my_idx = 0
         
         self.engine = None
@@ -98,6 +101,9 @@ class SixNimmtEnv(gym.Env):
                     opp.batch_size = 500
             elif self.opponent_type == "minimizer":
                 opp = Minimizer(player_idx=i)
+            elif self.opponent_type == "rl_agent":
+                from src.players.b12705048.agents.rl_agent import RLAgent
+                opp = RLAgent(player_idx=i, model_path=self.opponent_model_path)
             else:
                 raise ValueError(f"Unknown opponent type: {self.opponent_type}")
             self.opponents.append(opp)

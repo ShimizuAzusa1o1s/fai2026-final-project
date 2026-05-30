@@ -16,6 +16,8 @@ See Also:
 """
 import os
 import numpy as np
+import torch
+torch.set_num_threads(1)
 from sb3_contrib import MaskablePPO
 
 from src.players.b12705048.core.features import extract_features, compute_unseen_cards
