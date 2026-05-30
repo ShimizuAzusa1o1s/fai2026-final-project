@@ -15,7 +15,7 @@ See Also:
     ``flatmc.py`` — Late game component.
 """
 from src.players.b12705048.agents.rl_agent import RLAgent
-from src.players.b12705048.agents.flatmc import FlatMC
+from src.players.b12705048.agents.pimc_ppo import PimcPUCTPlayer
 
 class HybridPlayer:
     """
@@ -25,8 +25,8 @@ class HybridPlayer:
     Attributes:
         player_idx (int): This agent's seat index (0-3).
         rl_agent (RLAgent): Policy-based model for the first half of the round.
-        flatmc (FlatMC): Monte Carlo simulator for the second half of the round.
-        time_limit (float): Simulation budget in seconds (proxied to FlatMC).
+        pimc (PimcPUCTPlayer): MCTS simulator for the second half of the round.
+        time_limit (float): Simulation budget in seconds (proxied to PIMC).
     """
     def __init__(self, player_idx, model_path=None):
         """
@@ -40,27 +40,27 @@ class HybridPlayer:
         
         # ---- Phase 1: Sub-Agent Initialization ----
         self.rl_agent = RLAgent(player_idx, model_path=model_path)
-        self.flatmc = FlatMC(player_idx)
+        self.pimc = PimcPUCTPlayer(player_idx, model_path=model_path)
         
     @property
     def time_limit(self):
         """
-        Get the time limit used by the underlying FlatMC agent.
+        Get the time limit used by the underlying PIMC agent.
         
         Returns:
             float: Wall-clock budget in seconds.
         """
-        return self.flatmc.time_limit
+        return self.pimc.time_limit
         
     @time_limit.setter
     def time_limit(self, value):
         """
-        Set the time limit for the underlying FlatMC agent.
+        Set the time limit for the underlying PIMC agent.
         
         Args:
             value (float): Wall-clock budget in seconds.
         """
-        self.flatmc.time_limit = value
+        self.pimc.time_limit = value
 
     def action(self, hand, history):
         """
@@ -77,4 +77,4 @@ class HybridPlayer:
         if len(hand) > 5:
             return self.rl_agent.action(hand, history)
         else:
-            return self.flatmc.action(hand, history)
+            return self.pimc.action(hand, history)
