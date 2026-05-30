@@ -22,9 +22,6 @@ import sys
 import time
 import numpy as np
 import itertools
-import torch
-torch.set_num_threads(1)
-from sb3_contrib import MaskablePPO
 
 from src.players.b12705048.core.features import extract_features
 
@@ -39,23 +36,23 @@ class FlatMCPPO:
         total_cards (set[int]): The full card universe {1, ..., 104}.
         batch_size (int): Number of simultaneous simulations per batch.
         bullhead_lookup (np.ndarray): O(1) bullhead penalty lookup array.
-        model (MaskablePPO | None): The loaded RL model, or None if not found.
+        weights (dict | None): The loaded NumPy model weights, or None if not found.
     """
 
-    def __init__(self, player_idx, n_ply=1, model_path="src/players/b12705048/agents/stage3_model_final"):
+    def __init__(self, player_idx, n_ply=1, model_path="src/players/b12705048/agents/numpy_ppo_weights.npz"):
         """
         Initialize the PPO-Guided Flat Monte Carlo player.
 
         Args:
             player_idx (int): The player's seat index in the game (0-3).
             n_ply (int): Depth of initial deterministic search sequence.
-            model_path (str): Path to the trained MaskablePPO model zip file.
+            model_path (str): Path to the numpy weights file.
         """
         self.player_idx = player_idx
         self.n_ply = n_ply
         self.time_limit = 0.8
         self.total_cards = set(range(1, 105))
-        self.batch_size = 500  # Reduced batch size because PyTorch inference is slow
+        self.batch_size = 2000  # Increased batch size because NumPy inference is fast
         
         self.bullhead_lookup = np.zeros(105, dtype=np.int32)
         for card in range(1, 105):
@@ -71,11 +68,23 @@ class FlatMCPPO:
                 self.bullhead_lookup[card] = 1
 
         # ---- Phase 1: Sub-Agent Initialization ----
-        self.model = None
-        if os.path.exists(f"{model_path}.zip"):
-            self.model = MaskablePPO.load(model_path)
+        self.weights = None
+        if not model_path.endswith('.npz'):
+            # Provide fallback to default npz name
+            model_path = model_path.replace("stage3_model_final", "numpy_ppo_weights.npz")
+            if model_path.endswith('.zip'):
+                model_path = model_path.replace('.zip', '.npz')
+                
+        if os.path.exists(model_path):
+            self.weights = np.load(model_path)
+            self.fc1_w = self.weights['fc1_w'].T
+            self.fc1_b = self.weights['fc1_b']
+            self.fc2_w = self.weights['fc2_w'].T
+            self.fc2_b = self.weights['fc2_b']
+            self.action_w = self.weights['action_w'].T
+            self.action_b = self.weights['action_b']
         else:
-            print(f"Warning: RL model not found at {model_path}.")
+            print(f"Warning: Numpy model weights not found at {model_path}.")
 
     def _get_penalties(self, cards, tails, lengths, rbulls):
         """
@@ -243,8 +252,8 @@ class FlatMCPPO:
             # ---- Phase 3: SIMD Batch Simulation Loop ----
             for t in range(n_turns):
                 
-                # Dynamic PyTorch PPO inference
-                if self.model is not None and t >= actual_n_ply:
+                # Dynamic NumPy PPO inference
+                if self.weights is not None and t >= actual_n_ply:
                     for p_idx_eval in range(4):
                         rem = hands_array[:, p_idx_eval, t:]
                         num_rem = rem.shape[1]
@@ -318,10 +327,16 @@ class FlatMCPPO:
                             act_mask = np.zeros((actual_batch_size, 10), dtype=bool)
                             act_mask[:, :num_rem] = True
                             
-                            # Query PyTorch
-                            with torch.no_grad():
-                                # model.predict expects batched inputs and masks
-                                actions, _ = self.model.predict(X, action_masks=act_mask, deterministic=True)
+                            # Query NumPy
+                            if self.weights is not None:
+                                h1 = np.tanh(X @ self.fc1_w + self.fc1_b)
+                                h2 = np.tanh(h1 @ self.fc2_w + self.fc2_b)
+                                logits = h2 @ self.action_w + self.action_b
+                                
+                                logits[~act_mask] = -np.inf
+                                actions = np.argmax(logits, axis=1)
+                            else:
+                                actions = np.zeros(actual_batch_size, dtype=np.int32)
                                 
                             # Reorganize hands_array based on chosen action indices
                             chosen_cards = np.take_along_axis(rem, actions[:, None], axis=1).flatten()
