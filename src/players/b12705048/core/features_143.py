@@ -32,24 +32,11 @@ normalized so every feature lies in approximately [-1, 1].
 
 import numpy as np
 
+from src.players.b12705048.core.constants import BULLHEADS
+
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 N_FEATURES = 143
-
-# Bullhead (penalty-point) lookup table — shared across all callers.
-_BULLHEADS = [0] * 105
-for _c in range(1, 105):
-    if _c == 55:
-        _BULLHEADS[_c] = 7
-    elif _c % 11 == 0:
-        _BULLHEADS[_c] = 5
-    elif _c % 10 == 0:
-        _BULLHEADS[_c] = 3
-    elif _c % 5 == 0:
-        _BULLHEADS[_c] = 2
-    else:
-        _BULLHEADS[_c] = 1
-BULLHEADS: tuple[int, ...] = tuple(_BULLHEADS)
 
 # Normalization constants
 _MAX_CARD = 104.0

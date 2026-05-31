@@ -1,61 +1,46 @@
 """
-Flat Monte Carlo (1-Ply) Player Module — Vectorized SoA Variant.
-
-This module implements a high-throughput 1-ply Monte Carlo agent for 6 Nimmt!
-using a Structure of Arrays (SoA) architecture and NumPy SIMD batch execution.
-All candidates are evaluated simultaneously across ``batch_size`` parallel
-games in a single loop iteration, achieving ~10× higher simulation throughput
-than the sequential pure-Python ``flat_mc.py`` variant.
+MinMax Monte Carlo (1-Ply) Player Module — Vectorized SoA Variant.
 
 Algorithm:
     1. Build SoA arrays for ``batch_size`` independent games.
-    2. Randomly assign unseen cards to opponents via vectorized argsort.
-    3. Assign candidate cards: each candidate occupies an equal share of
-       the batch (``sims_per_cand = batch_size // n_candidates``).
-    4. Simulate all ``n_turns`` tricks across all games simultaneously
-       using NumPy boolean indexing (no Python loops over games).
-    5. Accumulate per-candidate penalties from the batch and restart.
+    2. Randomly assign unseen cards to opponents.
+    3. During rollout, instead of playing random cards, all simulated players
+       (including our future selves and all opponents) only choose their 
+       minimum or maximum available card (50/50 probability).
+    4. Simulate all tricks across all games simultaneously using NumPy.
 
 Characteristics:
-    - **Depth**: 1-ply (evaluates the immediate action only).
-    - **Rollout Policy**: Pure uniform random for all players.
-    - **SIMD Batching**: All games and candidates evaluated in one NumPy call
-      per trick, achieving ~5,000 parallel simulations per wall-clock second.
-    - **Time Management**: Repeats batches until the wall-clock budget expires.
+    - **Depth**: 1-ply (evaluates immediate action).
+    - **Rollout Policy**: Min-Max stochastic (simulates edge-playing heuristics).
+    - **Time Management**: Repeats batches until wall-clock budget expires.
 
 See Also:
-    ``greedy.py`` — Simpler deterministic baseline (no simulation).
+    ``flatmc.py`` — Uniform random rollout baseline.
 """
 
 import time
-import random
 import numpy as np
 
 from src.players.b12705048.core.constants import BULLHEAD_LOOKUP
 
-class FlatMC:
+class FlatMCMinMax:
     """
-    Vectorized 1-ply Monte Carlo agent for 6 Nimmt!.
-
-    Evaluates all candidate cards simultaneously across ``batch_size`` parallel
-    game simulations via NumPy SoA arrays.  Exact 6 Nimmt! placement rules
-    are enforced using vectorized boolean masks — no Python loops over
-    individual games.
+    Vectorized 1-ply Monte Carlo agent using a Min/Max restricted rollout policy.
 
     Attributes:
-        player_idx (int): This agent's seat index (0–3).
-        time_limit (float): Wall-clock budget in seconds per ``action()`` call.
+        player_idx (int): This agent's seat index (0-3).
+        time_limit (float): Simulation budget in seconds.
         total_cards (set[int]): The full card universe {1, ..., 104}.
-        batch_size (int): Number of simultaneous simulations per batch.
+        batch_size (int): Number of parallel simulations per batch.
         bullhead_lookup (np.ndarray): O(1) bullhead penalty lookup array.
     """
 
     def __init__(self, player_idx):
         """
-        Initialize the Vectorized Flat Monte Carlo player.
+        Initialize the MinMaxMC player.
 
         Args:
-            player_idx (int): The player's seat index in the game (0–3).
+            player_idx (int): The player's seat index in the game (0-3).
         """
         self.player_idx = player_idx
         self.time_limit = 0.1
@@ -65,19 +50,14 @@ class FlatMC:
 
     def action(self, hand, history):
         """
-        Evaluate all candidate cards via batched SoA simulation and return
-        the card with the lowest average penalty.
-
-        Allocates SoA NumPy arrays for all games upfront, assigns candidate
-        cards across batch slices, and simulates all tricks in one vectorized
-        pass per turn.
+        Evaluate candidate cards via batched SoA simulation with min-max rollout.
 
         Args:
             hand (list[int]): Cards currently available to play.
             history (dict | list): Game state from the engine.
 
         Returns:
-            int: The card value with the lowest average simulated penalty.
+            int: The card with the lowest average simulated penalty.
         """
         start_time = time.perf_counter()
 
@@ -116,33 +96,43 @@ class FlatMC:
             num_cand = len(candidates)
             sims_per_cand = self.batch_size // num_cand
             actual_batch_size = sims_per_cand * num_cand
-
-            if actual_batch_size == 0:
-                break
+            if actual_batch_size == 0: break
 
             # ---- Phase 2: Batch Initialization & Deal ----
-            # Initialize SoA arrays for the batch
             tails = np.tile(orig_tails, (actual_batch_size, 1))
             lengths = np.tile(orig_lengths, (actual_batch_size, 1))
             rbulls = np.tile(orig_rbulls, (actual_batch_size, 1))
             penalties = np.zeros((actual_batch_size, 4), dtype=np.int32)
 
-            # Deal hands
-            # Assign random weights to valid unseen cards, take argsort to sample without replacement
             rand_weights = np.random.rand(actual_batch_size, 105)
-            # Make seen cards invalid by setting their weight to -1
             unseen_mask = np.tile(unseen_mask_base, (actual_batch_size, 1))
             rand_weights[~unseen_mask] = -1.0
-
             perm = np.argsort(-rand_weights, axis=1)
 
             opp_indices = [i for i in range(4) if i != self.player_idx]
 
-            # hands_array shape: (actual_batch_size, 4_players, n_turns)
+            # Vectorized Min/Max Rollout Generation for Opponents
+            opp_hands_unsorted = np.zeros((actual_batch_size, 3, n_turns), dtype=np.int32)
+            opp_hands_unsorted[:, 0, :] = perm[:, 0:n_turns]
+            opp_hands_unsorted[:, 1, :] = perm[:, n_turns:2*n_turns]
+            opp_hands_unsorted[:, 2, :] = perm[:, 2*n_turns:3*n_turns]
+            opp_hands = np.sort(opp_hands_unsorted, axis=2)
+
+            choices = (np.random.rand(actual_batch_size, 3, n_turns) > 0.5).astype(np.int32)
+            min_counts = np.cumsum(1 - choices, axis=2)
+            min_counts_shifted = np.concatenate([np.zeros((actual_batch_size, 3, 1), dtype=np.int32), min_counts[:, :, :-1]], axis=2)
+            max_counts = np.cumsum(choices, axis=2)
+            max_counts_shifted = np.concatenate([np.zeros((actual_batch_size, 3, 1), dtype=np.int32), max_counts[:, :, :-1]], axis=2)
+            
+            left_indices = min_counts_shifted
+            right_indices = (n_turns - 1) - max_counts_shifted
+            selected_indices = np.where(choices == 0, left_indices, right_indices)
+            chosen_opp_cards = np.take_along_axis(opp_hands, selected_indices, axis=2)
+
             hands_array = np.zeros((actual_batch_size, 4, n_turns), dtype=np.int32)
-            hands_array[:, opp_indices[0], :] = perm[:, 0:n_turns]
-            hands_array[:, opp_indices[1], :] = perm[:, n_turns:2*n_turns]
-            hands_array[:, opp_indices[2], :] = perm[:, 2*n_turns:3*n_turns]
+            hands_array[:, opp_indices[0], :] = chosen_opp_cards[:, 0, :]
+            hands_array[:, opp_indices[1], :] = chosen_opp_cards[:, 1, :]
+            hands_array[:, opp_indices[2], :] = chosen_opp_cards[:, 2, :]
 
             # Assign our candidate cards
             c_idx = 0
@@ -151,17 +141,24 @@ class FlatMC:
                 end_b = start_b + sims_per_cand
 
                 my_rest = [x for x in hand if x != c]
-                rest_arr = np.array(my_rest, dtype=np.int32)
-                my_hands_chunk = np.tile(rest_arr, (sims_per_cand, 1))
+                hands_array[start_b:end_b, self.player_idx, 0] = c
                 
                 if len(my_rest) > 0:
-                    rand_my = np.random.rand(sims_per_cand, len(my_rest))
-                    my_perm = np.argsort(rand_my, axis=1)
-                    my_hands_chunk = np.take_along_axis(my_hands_chunk, my_perm, axis=1)
-
-                hands_array[start_b:end_b, self.player_idx, 0] = c
-                if len(my_rest) > 0:
-                    hands_array[start_b:end_b, self.player_idx, 1:] = my_hands_chunk
+                    my_hands_chunk = np.tile(np.sort(np.array(my_rest, dtype=np.int32)), (sims_per_cand, 1))
+                    n_rem = len(my_rest)
+                    
+                    choices_my = (np.random.rand(sims_per_cand, n_rem) > 0.5).astype(np.int32)
+                    min_my = np.cumsum(1 - choices_my, axis=1)
+                    min_s_my = np.concatenate([np.zeros((sims_per_cand, 1), dtype=np.int32), min_my[:, :-1]], axis=1)
+                    max_my = np.cumsum(choices_my, axis=1)
+                    max_s_my = np.concatenate([np.zeros((sims_per_cand, 1), dtype=np.int32), max_my[:, :-1]], axis=1)
+                    
+                    left_my = min_s_my
+                    right_my = (n_rem - 1) - max_s_my
+                    sel_my = np.where(choices_my == 0, left_my, right_my)
+                    
+                    chosen_my = np.take_along_axis(my_hands_chunk, sel_my, axis=1)
+                    hands_array[start_b:end_b, self.player_idx, 1:] = chosen_my
 
                 c_idx += 1
 
@@ -169,36 +166,28 @@ class FlatMC:
             for t in range(n_turns):
                 played_cards = hands_array[:, :, t]
 
-                # Exact rule: sort the 4 cards within each game
                 sort_idx = np.argsort(played_cards, axis=1)
                 sorted_cards = np.take_along_axis(played_cards, sort_idx, axis=1)
                 sorted_players = sort_idx
 
-                # Process sequentially from lowest card to highest
                 for i in range(4):
                     current_cards = sorted_cards[:, i]
                     current_players = sorted_players[:, i]
 
-                    # Target row is the row with max tail strictly less than card
                     valid = np.where(current_cards[:, None] > tails, tails, -1)
                     target_rows = np.argmax(valid, axis=1)
                     invalid_mask = np.max(valid, axis=1) == -1
 
-                    # For invalid cards, target the row with min score
                     scores = rbulls * 1000 + lengths * 10 + np.arange(4)
                     min_rows = np.argmin(scores, axis=1)
                     target_rows = np.where(invalid_mask, min_rows, target_rows)
 
-                    # Update logic
                     b_idx = np.arange(actual_batch_size)
-
                     target_lengths = lengths[b_idx, target_rows]
                     target_bullheads = rbulls[b_idx, target_rows]
 
-                    # Penalty occurs if invalid, or if placing the 6th card (length == 5)
                     penalty_condition = invalid_mask | (target_lengths == 5)
                     normal_cond = ~penalty_condition
-
                     card_bulls = self.bullhead_lookup[current_cards]
 
                     if np.any(penalty_condition):
@@ -206,10 +195,7 @@ class FlatMC:
                         b_pc = b_idx[pc]
                         p_players = current_players[pc]
                         
-                        # Add penalty
                         penalties[b_pc, p_players] += target_bullheads[pc]
-                        
-                        # Reset row
                         lengths[b_pc, target_rows[pc]] = 1
                         tails[b_pc, target_rows[pc]] = current_cards[pc]
                         rbulls[b_pc, target_rows[pc]] = card_bulls[pc]
@@ -218,7 +204,6 @@ class FlatMC:
                         nc = normal_cond
                         b_nc = b_idx[nc]
                         
-                        # Append to row
                         lengths[b_nc, target_rows[nc]] += 1
                         tails[b_nc, target_rows[nc]] = current_cards[nc]
                         rbulls[b_nc, target_rows[nc]] += card_bulls[nc]
@@ -228,7 +213,6 @@ class FlatMC:
             for c in candidates:
                 start_b = c_idx * sims_per_cand
                 end_b = start_b + sims_per_cand
-
                 my_pens = penalties[start_b:end_b, self.player_idx]
                 stats_penalty[c] += np.sum(my_pens)
                 stats_visits[c] += sims_per_cand

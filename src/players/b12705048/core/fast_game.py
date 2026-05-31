@@ -15,12 +15,13 @@ Characteristics:
     - **State Tracking**: Maintains history needed for feature extraction.
 
 See Also:
-    ``features.py`` — Relies on this game state for feature generation.
+    ``features_143.py`` — Relies on this game state for feature generation.
 """
 
 import random
+from src.players.b12705048.core.constants import BULLHEADS
 from src.players.b12705048.core.features_143 import (
-    BULLHEADS, N_FEATURES, extract_features, compute_unseen_cards,
+    N_FEATURES, extract_features, compute_unseen_cards,
 )
 
 try:

@@ -31,8 +31,6 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 import gymnasium as gym
 import numpy as np
 
-import sys
-import os
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))

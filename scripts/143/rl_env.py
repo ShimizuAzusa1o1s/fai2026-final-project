@@ -14,7 +14,6 @@ See Also:
     ``src/engine.py`` — The core game engine.
     ``scripts/train_ppo.py`` — The PPO training script.
 """
-import copy
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces

@@ -128,3 +128,24 @@ class RLAgent:
             action = 0
             
         return sorted_hand[action]
+
+    def evaluate_batch(self, obs_matrix: np.ndarray) -> np.ndarray:
+        """
+        Evaluate a batch of states using the PPO Critic (Value Network).
+        
+        Args:
+            obs_matrix (np.ndarray): Batch of N-dimensional feature vectors
+                (N=143 or N=167 depending on the loaded model).
+            
+        Returns:
+            np.ndarray: Batch of estimated state values (expected relative penalties).
+        """
+        if self.model is None or obs_matrix.shape[0] == 0:
+            return np.zeros(obs_matrix.shape[0], dtype=np.float32)
+            
+        import torch
+        obs_tensor = torch.as_tensor(obs_matrix, dtype=torch.float32, device=self.model.device)
+        with torch.no_grad():
+            values = self.model.policy.predict_values(obs_tensor)
+            
+        return values.cpu().numpy().flatten()

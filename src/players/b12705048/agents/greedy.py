@@ -15,7 +15,7 @@ Characteristics:
     - **Maximizer**: Aggressively plays high cards first.
 
 See Also:
-    ``flat_mc_o1.py`` — First step up in complexity (1-ply random search).
+    ``flatmc.py`` — First step up in complexity (1-ply random search).
 """
 
 
