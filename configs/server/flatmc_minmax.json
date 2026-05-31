@@ -3,7 +3,7 @@
     "server_port": 8888,
     "username": "ShimizuAzusa",
     "password": "LaoWang1015@@",
-    "label": "OriginiumE1",
+    "label": "OriginiumE2",
     "player": {
         "path": "src.players.b12705048.agents.flatmc_minmax",
         "class": "FlatMCMinMax",
