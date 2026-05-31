@@ -61,6 +61,42 @@ class SixNimmtEnv(gym.Env):
         reward_shaping_weight (float): Multiplier for heatmap-driven penalty shaping.
         my_idx (int): The seat index of the RL agent (fixed at 0).
     """
+    _model_cache = {}
+
+    def _get_rl_agent(self, player_idx, model_path):
+        """
+        Retrieves a cached RLAgent or loads a new one, ensuring memory efficiency.
+        
+        Args:
+            player_idx (int): The seat index for the agent (1-3).
+            model_path (str): The path to the trained RL model to load.
+            
+        Returns:
+            RLAgent: A shallow copy of the cached RLAgent with the specified player_idx.
+        """
+        import os
+        from src.players.b12705048.agents.rl_agent import RLAgent
+        import copy
+        
+        # Dynamically reload latest model if modified time changed
+        if "latest" in model_path:
+            full_path = f"{model_path}.zip"
+            if os.path.exists(full_path):
+                mtime = os.path.getmtime(full_path)
+                if getattr(self, "_latest_mtime", 0) < mtime:
+                    if model_path in self._model_cache:
+                        del self._model_cache[model_path]
+                    self._latest_mtime = mtime
+
+        if model_path not in self._model_cache:
+            # Load and cache RLAgent once per process to save memory
+            self._model_cache[model_path] = RLAgent(player_idx=0, model_path=model_path)
+        
+        # Shallow copy to assign the correct player_idx
+        agent = copy.copy(self._model_cache[model_path])
+        agent.player_idx = player_idx
+        return agent
+
     def __init__(self, opponent_type="minimizer", opponent_time_limit=0.01, opponent_model_path=None, spawn_trick=0, reward_shaping_weight=0.0):
         """
         Initialize the SixNimmt environment.
@@ -102,19 +138,32 @@ class SixNimmtEnv(gym.Env):
         
         self.opponents = []
         for i in range(1, 4):
-            if self.opponent_type == "flatmc":
+            current_opp_type = self.opponent_type
+            if current_opp_type == "mixed":
+                p = np.random.rand()
+                if p < 0.2:
+                    current_opp_type = "minimizer"
+                elif p < 0.5:
+                    current_opp_type = "flatmc"
+                else:
+                    current_opp_type = "rl_agent"
+
+            if current_opp_type == "flatmc":
                 opp = FlatMC(player_idx=i)
                 opp.time_limit = self.opponent_time_limit
                 # Reduce batch size for short time budgets to prevent massive overshoots
                 if self.opponent_time_limit <= 0.05:
                     opp.batch_size = 500
-            elif self.opponent_type == "minimizer":
+            elif current_opp_type == "minimizer":
                 opp = Minimizer(player_idx=i)
-            elif self.opponent_type == "rl_agent":
-                from src.players.b12705048.agents.rl_agent import RLAgent
-                opp = RLAgent(player_idx=i, model_path=self.opponent_model_path)
+            elif current_opp_type == "rl_agent":
+                if isinstance(self.opponent_model_path, list):
+                    path = np.random.choice(self.opponent_model_path)
+                else:
+                    path = self.opponent_model_path
+                opp = self._get_rl_agent(i, path)
             else:
-                raise ValueError(f"Unknown opponent type: {self.opponent_type}")
+                raise ValueError(f"Unknown opponent type: {current_opp_type}")
             self.opponents.append(opp)
             
         self.rl_player = RLDummyPlayer(player_idx=self.my_idx)

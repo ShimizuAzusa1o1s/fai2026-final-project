@@ -20,7 +20,6 @@ import torch
 torch.set_num_threads(1)
 from sb3_contrib import MaskablePPO
 
-from src.players.b12705048.core.features_143 import extract_features, compute_unseen_cards
 
 class RLAgent:
     """
@@ -45,11 +44,23 @@ class RLAgent:
         
         if model_path is None:
             base_dir = os.path.dirname(os.path.abspath(__file__))
-            model_path = os.path.join(base_dir, "models", "rl_model_143_stage3")
+            model_path = os.path.join(base_dir, "models", "rl_model_167_stage3")
 
         self.model = None
         if os.path.exists(f"{model_path}.zip"):
             self.model = MaskablePPO.load(model_path)
+            
+            # Dynamically determine feature extractor based on model input space
+            obs_dim = self.model.observation_space.shape[0]
+            if obs_dim == 143:
+                from src.players.b12705048.core.features_143 import extract_features, compute_unseen_cards
+            elif obs_dim == 167:
+                from src.players.b12705048.core.features_167 import extract_features, compute_unseen_cards
+            else:
+                raise ValueError(f"Unsupported model feature dimension: {obs_dim}")
+                
+            self.extract_features = extract_features
+            self.compute_unseen_cards = compute_unseen_cards
         else:
             print(f"Warning: RL model not found at {model_path}. Using fallback strategy.")
             
@@ -83,14 +94,14 @@ class RLAgent:
             board_history = []
             score_history = []
 
-        unseen = compute_unseen_cards(
+        unseen = self.compute_unseen_cards(
             hand=hand,
             board=board,
             history_matrix=history_matrix,
             board_history=board_history
         )
         
-        obs = extract_features(
+        obs = self.extract_features(
             board=board,
             hand=hand,
             unseen=unseen,

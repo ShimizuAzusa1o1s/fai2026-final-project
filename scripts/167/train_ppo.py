@@ -27,7 +27,45 @@ from sb3_contrib import MaskablePPO
 from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
-from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
+
+class SaveLatestCallback(BaseCallback):
+    """
+    A custom callback to periodically save the model as the latest version.
+    
+    This enables symmetric self-play by allowing the environment to load
+    the most up-to-date policy during League Training.
+    
+    Attributes:
+        save_freq (int): Number of steps between saves.
+        save_path (str): Directory where the model will be saved.
+        name_prefix (str): Filename prefix for the saved model.
+    """
+    def __init__(self, save_freq, save_path, name_prefix="rl_model_167_latest", verbose=1):
+        """
+        Initialize the SaveLatestCallback.
+        
+        Args:
+            save_freq (int): The frequency (in steps) to save the model.
+            save_path (str): The directory to save the model.
+            name_prefix (str): The filename for the model.
+            verbose (int): Verbosity level (0: no output, 1: info messages).
+        """
+        super(SaveLatestCallback, self).__init__(verbose)
+        self.save_freq = save_freq
+        self.save_path = save_path
+        self.name_prefix = name_prefix
+
+    def _on_step(self) -> bool:
+        """
+        Action to take at each step.
+        
+        Returns:
+            bool: True if the training should continue, False otherwise.
+        """
+        if self.n_calls % self.save_freq == 0:
+            self.model.save(os.path.join(self.save_path, self.name_prefix))
+        return True
 import gymnasium as gym
 import numpy as np
 
@@ -245,15 +283,23 @@ def train_agent(test_mode=False, start_stage=1, start_model_path=None):
         model.save(f"{model_dir}/rl_model_167_stage3")
         env_stage3.close()
 
-    # ---- Phase 4: Self-play against Stage 1 Model ----
+    # ---- Phase 4: League Training (Mixed Opponents + Symmetric Self-play) ----
     if start_stage <= 4:
+        historical_models = [
+            "src/players/b12705048/agents/models/rl_model_167_stage1c",
+            "src/players/b12705048/agents/models/rl_model_167_stage2",
+            "src/players/b12705048/agents/models/rl_model_167_stage3",
+            "src/players/b12705048/agents/models/rl_model_167_latest"
+        ]
         env_kwargs_stage4 = {
-            "opponent_type": "rl_agent",
-            "opponent_model_path": "src/players/b12705048/agents/models/rl_model_167_stage1c"
+            "opponent_type": "mixed",
+            "opponent_model_path": historical_models,
+            "opponent_time_limit": 0.01  # Use fast flatmc to speed up training
         }
         
-        n_envs_selfplay = 4
-        print(f"Initializing environment for Stage 4 (reduced to {n_envs_selfplay} envs to save memory)...")
+        # Increased envs to 8 since models are now cached efficiently
+        n_envs_selfplay = 8
+        print(f"Initializing environment for Stage 4 (League Training with {n_envs_selfplay} envs)...")
         env_stage4 = make_vec_env(
             SixNimmtEnv, 
             n_envs=n_envs_selfplay, 
@@ -270,58 +316,27 @@ def train_agent(test_mode=False, start_stage=1, start_model_path=None):
         else:
             model.set_env(env_stage4)
             
-        steps_4 = 5000 if test_mode else 1_000_000
-        print(f"Starting Stage 4: Training against Stage 1 Model ({steps_4} steps)...")
+        # Save initially so environments have a latest model to load
+        model.save(f"{model_dir}/rl_model_167_latest")
+            
+        steps_4 = 5000 if test_mode else 2_000_000
+        print(f"Starting Stage 4: League Training ({steps_4} steps)...")
         start_time = time.time()
         
         checkpoint_callback_4 = CheckpointCallback(save_freq=100_000 // n_envs_selfplay, save_path=model_dir, name_prefix="rl_model_167_stage4")
-        model.learn(total_timesteps=steps_4, callback=checkpoint_callback_4)
+        save_latest_callback = SaveLatestCallback(save_freq=50_000 // n_envs_selfplay, save_path=model_dir)
+        
+        model.learn(total_timesteps=steps_4, callback=[checkpoint_callback_4, save_latest_callback])
         
         print(f"Phase 4 Complete in {time.time() - start_time:.2f}s")
         model.save(f"{model_dir}/rl_model_167_stage4")
         env_stage4.close()
 
-    # ---- Phase 5: Self-play against Stage 2 Model ----
-    if start_stage <= 5:
-        env_kwargs_stage5 = {
-            "opponent_type": "rl_agent",
-            "opponent_model_path": "src/players/b12705048/agents/models/rl_model_167_stage2"
-        }
-        
-        n_envs_selfplay = 4
-        print(f"Initializing environment for Stage 5 (reduced to {n_envs_selfplay} envs to save memory)...")
-        env_stage5 = make_vec_env(
-            SixNimmtEnv, 
-            n_envs=n_envs_selfplay, 
-            env_kwargs=env_kwargs_stage5,
-            vec_env_cls=SubprocVecEnv,
-            wrapper_class=ActionMasker,
-            wrapper_kwargs={"action_mask_fn": mask_fn}
-        )
-        
-        if model is None:
-            load_path = start_model_path if start_model_path else f"{model_dir}/rl_model_167_stage4"
-            print(f"Loading model from {load_path}...")
-            model = MaskablePPO.load(load_path, env=env_stage5)
-        else:
-            model.set_env(env_stage5)
-            
-        steps_5 = 5000 if test_mode else 1_000_000
-        print(f"Starting Stage 5: Training against Stage 2 Model ({steps_5} steps)...")
-        start_time = time.time()
-        
-        checkpoint_callback_5 = CheckpointCallback(save_freq=100_000 // n_envs_selfplay, save_path=model_dir, name_prefix="rl_model_167_stage5")
-        model.learn(total_timesteps=steps_5, callback=checkpoint_callback_5)
-        
-        print(f"Phase 5 Complete in {time.time() - start_time:.2f}s")
-        model.save(f"{model_dir}/rl_model_167_stage5")
-        env_stage5.close()
-
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--test-mode", action="store_true", help="Run in test mode (fewer steps)")
-    parser.add_argument("--start-stage", type=int, default=1, choices=[1, 2, 3, 4, 5], help="Stage to start from")
+    parser.add_argument("--start-stage", type=int, default=1, choices=[1, 2, 3, 4], help="Stage to start from")
     parser.add_argument("--start-model", type=str, default=None, help="Path to checkpoint model to load (without .zip)")
     args = parser.parse_args()
     
