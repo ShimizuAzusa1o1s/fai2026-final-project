@@ -43,7 +43,8 @@ class FlatMCMinMax:
             player_idx (int): The player's seat index in the game (0-3).
         """
         self.player_idx = player_idx
-        self.time_limit = 0.1
+        self.time_limit = 0.8
+        self.epsilon = 0.1
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
         self.bullhead_lookup = BULLHEAD_LOOKUP
@@ -129,10 +130,13 @@ class FlatMCMinMax:
             selected_indices = np.where(choices == 0, left_indices, right_indices)
             chosen_opp_cards = np.take_along_axis(opp_hands, selected_indices, axis=2)
 
+            eps_mask_opp = np.random.rand(actual_batch_size, 3, 1) < self.epsilon
+            final_opp_cards = np.where(eps_mask_opp, opp_hands_unsorted, chosen_opp_cards)
+
             hands_array = np.zeros((actual_batch_size, 4, n_turns), dtype=np.int32)
-            hands_array[:, opp_indices[0], :] = chosen_opp_cards[:, 0, :]
-            hands_array[:, opp_indices[1], :] = chosen_opp_cards[:, 1, :]
-            hands_array[:, opp_indices[2], :] = chosen_opp_cards[:, 2, :]
+            hands_array[:, opp_indices[0], :] = final_opp_cards[:, 0, :]
+            hands_array[:, opp_indices[1], :] = final_opp_cards[:, 1, :]
+            hands_array[:, opp_indices[2], :] = final_opp_cards[:, 2, :]
 
             # Assign our candidate cards
             c_idx = 0
@@ -158,7 +162,17 @@ class FlatMCMinMax:
                     sel_my = np.where(choices_my == 0, left_my, right_my)
                     
                     chosen_my = np.take_along_axis(my_hands_chunk, sel_my, axis=1)
-                    hands_array[start_b:end_b, self.player_idx, 1:] = chosen_my
+                    
+                    my_rest_arr = np.array(my_rest, dtype=np.int32)
+                    my_hands_unsorted = np.tile(my_rest_arr, (sims_per_cand, 1))
+                    rand_my = np.random.rand(sims_per_cand, n_rem)
+                    my_perm = np.argsort(rand_my, axis=1)
+                    my_hands_random = np.take_along_axis(my_hands_unsorted, my_perm, axis=1)
+                    
+                    eps_mask_my = np.random.rand(sims_per_cand, 1) < self.epsilon
+                    final_my = np.where(eps_mask_my, my_hands_random, chosen_my)
+                    
+                    hands_array[start_b:end_b, self.player_idx, 1:] = final_my
 
                 c_idx += 1
 
