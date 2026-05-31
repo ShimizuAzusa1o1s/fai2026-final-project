@@ -201,11 +201,6 @@ class SixNimmtEnv(gym.Env):
         )
         return features
 
-    def valid_action_mask(self):
-        mask = np.zeros(10, dtype=bool)
-        if len(self.current_hand) > 0:
-            mask[:len(self.current_hand)] = True
-        return mask
 
     def step(self, action):
         """
@@ -218,8 +213,11 @@ class SixNimmtEnv(gym.Env):
             tuple[np.ndarray, float, bool, bool, dict]: Observation, reward, done flag, truncation flag, and info dict.
         """
         # ---- Phase 1: Action Resolution ----
+        invalid_action_penalty = 0.0
         if action >= len(self.current_hand):
-            raise ValueError(f"Invalid action {action} for hand size {len(self.current_hand)}")
+            invalid_action_penalty = 50.0
+            # Fall back to a random valid action
+            action = int(np.random.choice(len(self.current_hand)))
             
         played_card = self.current_hand[action]
         self.rl_player.played_card = played_card
@@ -252,7 +250,7 @@ class SixNimmtEnv(gym.Env):
         opp_indices = [1, 2, 3]
         opp_penalty = sum(current_scores[i] - prev_scores[i] for i in opp_indices) / 3.0
         
-        reward = opp_penalty - my_penalty - (shaping_penalty * self.reward_shaping_weight)
+        reward = opp_penalty - my_penalty - (shaping_penalty * self.reward_shaping_weight) - invalid_action_penalty
         
         done = len(self.current_hand) == 0
         truncated = False

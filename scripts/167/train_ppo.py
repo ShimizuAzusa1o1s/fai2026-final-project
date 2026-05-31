@@ -23,8 +23,7 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 
-from sb3_contrib import MaskablePPO
-from sb3_contrib.common.wrappers import ActionMasker
+from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
@@ -76,9 +75,6 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 from rl_env import SixNimmtEnv
 
-def mask_fn(env: gym.Env) -> np.ndarray:
-    return env.unwrapped.valid_action_mask()
-
 def train_agent(test_mode=False, start_stage=1, start_model_path=None):
     """
     Main training loop for the RL agent using Curriculum Learning.
@@ -107,20 +103,18 @@ def train_agent(test_mode=False, start_stage=1, start_model_path=None):
             SixNimmtEnv, 
             n_envs=n_envs, 
             env_kwargs=env_kwargs_stage1a,
-            vec_env_cls=SubprocVecEnv,
-            wrapper_class=ActionMasker,
-            wrapper_kwargs={"action_mask_fn": mask_fn}
+            vec_env_cls=SubprocVecEnv
         )
         
         load_path = start_model_path if start_model_path else None
         if load_path and model is None:
             print(f"Loading model from {load_path}...")
-            model = MaskablePPO.load(load_path, env=env_stage1a)
+            model = RecurrentPPO.load(load_path, env=env_stage1a)
         elif model is None:
-            model = MaskablePPO(
-                "MlpPolicy",
+            model = RecurrentPPO(
+                "MlpLstmPolicy",
                 env_stage1a,
-                policy_kwargs={"net_arch": [512, 256]},
+                policy_kwargs={"net_arch": [512, 256], "lstm_hidden_size": 256},
                 batch_size=4096,
                 gamma=0.99,
                 verbose=1,
@@ -151,13 +145,11 @@ def train_agent(test_mode=False, start_stage=1, start_model_path=None):
             SixNimmtEnv, 
             n_envs=n_envs, 
             env_kwargs=env_kwargs_stage1b,
-            vec_env_cls=SubprocVecEnv,
-            wrapper_class=ActionMasker,
-            wrapper_kwargs={"action_mask_fn": mask_fn}
+            vec_env_cls=SubprocVecEnv
         )
         
         if model is None:
-            model = MaskablePPO.load(f"{model_dir}/rl_model_167_stage1a", env=env_stage1b)
+            model = RecurrentPPO.load(f"{model_dir}/rl_model_167_stage1a", env=env_stage1b)
         else:
             model.set_env(env_stage1b)
             
@@ -184,13 +176,11 @@ def train_agent(test_mode=False, start_stage=1, start_model_path=None):
             SixNimmtEnv, 
             n_envs=n_envs, 
             env_kwargs=env_kwargs_stage1c,
-            vec_env_cls=SubprocVecEnv,
-            wrapper_class=ActionMasker,
-            wrapper_kwargs={"action_mask_fn": mask_fn}
+            vec_env_cls=SubprocVecEnv
         )
         
         if model is None:
-            model = MaskablePPO.load(f"{model_dir}/rl_model_167_stage1b", env=env_stage1c)
+            model = RecurrentPPO.load(f"{model_dir}/rl_model_167_stage1b", env=env_stage1c)
         else:
             model.set_env(env_stage1c)
             
@@ -220,15 +210,13 @@ def train_agent(test_mode=False, start_stage=1, start_model_path=None):
             SixNimmtEnv, 
             n_envs=n_envs, 
             env_kwargs=env_kwargs_stage2,
-            vec_env_cls=SubprocVecEnv,
-            wrapper_class=ActionMasker,
-            wrapper_kwargs={"action_mask_fn": mask_fn}
+            vec_env_cls=SubprocVecEnv
         )
         
         if model is None:
             load_path = start_model_path if start_model_path else f"{model_dir}/rl_model_167_stage1c"
             print(f"Loading model from {load_path}...")
-            model = MaskablePPO.load(load_path, env=env_stage2)
+            model = RecurrentPPO.load(load_path, env=env_stage2)
         else:
             model.set_env(env_stage2)
         
@@ -255,15 +243,13 @@ def train_agent(test_mode=False, start_stage=1, start_model_path=None):
             SixNimmtEnv, 
             n_envs=n_envs, 
             env_kwargs=env_kwargs_stage3,
-            vec_env_cls=SubprocVecEnv,
-            wrapper_class=ActionMasker,
-            wrapper_kwargs={"action_mask_fn": mask_fn}
+            vec_env_cls=SubprocVecEnv
         )
         
         if model is None:
             load_path = start_model_path if start_model_path else f"{model_dir}/rl_model_167_stage2"
             print(f"Loading model from {load_path}...")
-            model = MaskablePPO.load(load_path, env=env_stage3)
+            model = RecurrentPPO.load(load_path, env=env_stage3)
         else:
             model.set_env(env_stage3)
         
@@ -302,15 +288,13 @@ def train_agent(test_mode=False, start_stage=1, start_model_path=None):
             SixNimmtEnv, 
             n_envs=n_envs_selfplay, 
             env_kwargs=env_kwargs_stage4,
-            vec_env_cls=SubprocVecEnv,
-            wrapper_class=ActionMasker,
-            wrapper_kwargs={"action_mask_fn": mask_fn}
+            vec_env_cls=SubprocVecEnv
         )
         
         if model is None:
             load_path = start_model_path if start_model_path else f"{model_dir}/rl_model_167_stage3"
             print(f"Loading model from {load_path}...")
-            model = MaskablePPO.load(load_path, env=env_stage4)
+            model = RecurrentPPO.load(load_path, env=env_stage4)
         else:
             model.set_env(env_stage4)
             
