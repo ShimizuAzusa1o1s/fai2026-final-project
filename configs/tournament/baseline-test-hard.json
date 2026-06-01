@@ -21,8 +21,8 @@
             "P1"
         ],
         [
-            "src.players.b12705048.agents.flatmc_minmax",
-            "FlatMCMinMax",
+            "src.players.b12705048.agents.flatmc_bimodal",
+            "FlatMCBimodal",
             {},
             "P2"
         ]

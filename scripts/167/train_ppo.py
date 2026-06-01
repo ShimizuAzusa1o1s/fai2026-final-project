@@ -291,12 +291,15 @@ def train_agent(test_mode=False, start_stage=1, start_model_path=None):
             vec_env_cls=SubprocVecEnv
         )
         
-        if model is None:
+        if model is not None:
+            temp_path = f"{model_dir}/temp_stage4_transition"
+            model.save(temp_path)
+            del model
+            model = RecurrentPPO.load(temp_path, env=env_stage4)
+        else:
             load_path = start_model_path if start_model_path else f"{model_dir}/rl_model_167_stage3"
             print(f"Loading model from {load_path}...")
             model = RecurrentPPO.load(load_path, env=env_stage4)
-        else:
-            model.set_env(env_stage4)
             
         # Save initially so environments have a latest model to load
         model.save(f"{model_dir}/rl_model_167_latest")

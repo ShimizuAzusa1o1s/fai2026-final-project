@@ -33,6 +33,8 @@ final-project/
 │           ├── agents/           # Production agent implementations
 │           │   ├── greedy.py         # Minimizer / Maximizer baselines
 │           │   ├── flatmc.py         # ★ Vectorized Flat Monte Carlo (primary)
+│           │   ├── flatmc_bimodal.py # Bimodal budget allocation variant
+│           │   ├── flatmc_ucb1.py    # UCB1 dynamic allocation variant
 │           │   ├── flatmc_minmax.py  # Min/Max rollout variant of FlatMC
 │           │   ├── mcts_agent.py     # Information Set MCTS (tree search)
 │           │   ├── rl_agent.py       # PPO RL agent wrapper (inference only)
@@ -65,6 +67,8 @@ final-project/
 | **Minimizer** | `agents/greedy.py` | Always plays lowest card | 0-ply | O(1) | N/A |
 | **Maximizer** | `agents/greedy.py` | Always plays highest card | 0-ply | O(1) | N/A |
 | **FlatMC** | `agents/flatmc.py` | 1-ply MC with uniform random rollout | 1-ply | 0.1s | ✅ NumPy SoA |
+| **FlatMCBimodal** | `agents/flatmc_bimodal.py` | 1-ply MC with static bimodal budget allocation | 1-ply | 0.8s | ✅ NumPy SoA |
+| **FlatMCUCB1** | `agents/flatmc_ucb1.py` | 1-ply MC with dynamic UCB1 budget allocation | 1-ply | 0.8s | ✅ NumPy SoA |
 | **FlatMCMinMax** | `agents/flatmc_minmax.py` | 1-ply MC with min/max stochastic rollout | 1-ply | 0.9s | ✅ NumPy SoA |
 | **MCTSAgent** | `agents/mcts_agent.py` | Open-loop IS-MCTS with UCB1 + min/max rollout | Variable | 0.9s | ❌ Pure Python |
 | **RLAgent** | `agents/rl_agent.py` | MaskablePPO policy network (inference only) | 1-ply | O(1) | N/A |
