@@ -178,7 +178,15 @@ class SixNimmtEnv(gym.Env):
         self.current_hand = sorted(self.engine.hands[self.my_idx])
         
         self.last_obs = self._get_obs()
-        return self.last_obs, {}
+        info = {}
+        opp_cards = set()
+        for i in range(1, 4):
+            opp_cards.update(self.engine.hands[i])
+        opp_multihot = np.zeros(105, dtype=np.float32)
+        if opp_cards:
+            opp_multihot[list(opp_cards)] = 1.0
+        info["opp_cards_multihot"] = opp_multihot
+        return self.last_obs, info
 
     def _get_obs(self):
         unseen = compute_unseen_cards(
@@ -255,6 +263,13 @@ class SixNimmtEnv(gym.Env):
         done = len(self.current_hand) == 0
         truncated = False
         info = {}
+        opp_cards = set()
+        for i in range(1, 4):
+            opp_cards.update(self.engine.hands[i])
+        opp_multihot = np.zeros(105, dtype=np.float32)
+        if opp_cards:
+            opp_multihot[list(opp_cards)] = 1.0
+        info["opp_cards_multihot"] = opp_multihot
         
         self.last_obs = self._get_obs()
         

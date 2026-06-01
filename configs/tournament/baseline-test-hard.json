@@ -21,9 +21,11 @@
             "P1"
         ],
         [
-            "src.players.b12705048.agents.flatmc_bimodal",
-            "FlatMCBimodal",
-            {},
+            "src.players.b12705048.agents.flatmc_ucb1",
+            "FlatMCUCB1",
+            {
+                "c_param": 5.0
+            },
             "P2"
         ]
     ],

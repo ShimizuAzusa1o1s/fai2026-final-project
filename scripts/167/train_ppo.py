@@ -16,6 +16,13 @@ import os
 import sys
 import time
 
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
+project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+
 # Set thread count to 1 to prevent massive CPU thread contention when running 16 envs
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -23,7 +30,7 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 
-from sb3_contrib import RecurrentPPO
+from src.players.b12705048.agents.belief_ppo import BeliefPPO, BeliefPolicy
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
@@ -67,12 +74,6 @@ class SaveLatestCallback(BaseCallback):
         return True
 import gymnasium as gym
 import numpy as np
-
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, current_dir)
-project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
 from rl_env import SixNimmtEnv
 
 def train_agent(test_mode=False, start_stage=1, start_model_path=None):
@@ -109,12 +110,13 @@ def train_agent(test_mode=False, start_stage=1, start_model_path=None):
         load_path = start_model_path if start_model_path else None
         if load_path and model is None:
             print(f"Loading model from {load_path}...")
-            model = RecurrentPPO.load(load_path, env=env_stage1a)
+            model = BeliefPPO.load(load_path, env=env_stage1a)
         elif model is None:
-            model = RecurrentPPO(
-                "MlpLstmPolicy",
+            print("Initializing new BeliefPPO model...")
+            model = BeliefPPO(
+                BeliefPolicy,
                 env_stage1a,
-                policy_kwargs={"net_arch": [512, 256], "lstm_hidden_size": 256},
+                policy_kwargs={"net_arch": [512, 256]},
                 batch_size=4096,
                 gamma=0.99,
                 verbose=1,
@@ -149,7 +151,7 @@ def train_agent(test_mode=False, start_stage=1, start_model_path=None):
         )
         
         if model is None:
-            model = RecurrentPPO.load(f"{model_dir}/rl_model_167_stage1a", env=env_stage1b)
+            model = BeliefPPO.load(f"{model_dir}/rl_model_167_stage1a", env=env_stage1b)
         else:
             model.set_env(env_stage1b)
             
@@ -180,7 +182,7 @@ def train_agent(test_mode=False, start_stage=1, start_model_path=None):
         )
         
         if model is None:
-            model = RecurrentPPO.load(f"{model_dir}/rl_model_167_stage1b", env=env_stage1c)
+            model = BeliefPPO.load(f"{model_dir}/rl_model_167_stage1b", env=env_stage1c)
         else:
             model.set_env(env_stage1c)
             
@@ -216,7 +218,7 @@ def train_agent(test_mode=False, start_stage=1, start_model_path=None):
         if model is None:
             load_path = start_model_path if start_model_path else f"{model_dir}/rl_model_167_stage1c"
             print(f"Loading model from {load_path}...")
-            model = RecurrentPPO.load(load_path, env=env_stage2)
+            model = BeliefPPO.load(load_path, env=env_stage2)
         else:
             model.set_env(env_stage2)
         
@@ -249,7 +251,7 @@ def train_agent(test_mode=False, start_stage=1, start_model_path=None):
         if model is None:
             load_path = start_model_path if start_model_path else f"{model_dir}/rl_model_167_stage2"
             print(f"Loading model from {load_path}...")
-            model = RecurrentPPO.load(load_path, env=env_stage3)
+            model = BeliefPPO.load(load_path, env=env_stage3)
         else:
             model.set_env(env_stage3)
         
@@ -295,11 +297,11 @@ def train_agent(test_mode=False, start_stage=1, start_model_path=None):
             temp_path = f"{model_dir}/temp_stage4_transition"
             model.save(temp_path)
             del model
-            model = RecurrentPPO.load(temp_path, env=env_stage4)
+            model = BeliefPPO.load(temp_path, env=env_stage4)
         else:
             load_path = start_model_path if start_model_path else f"{model_dir}/rl_model_167_stage3"
             print(f"Loading model from {load_path}...")
-            model = RecurrentPPO.load(load_path, env=env_stage4)
+            model = BeliefPPO.load(load_path, env=env_stage4)
             
         # Save initially so environments have a latest model to load
         model.save(f"{model_dir}/rl_model_167_latest")

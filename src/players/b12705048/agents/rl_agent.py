@@ -18,7 +18,7 @@ import os
 import numpy as np
 import torch
 torch.set_num_threads(1)
-from sb3_contrib import RecurrentPPO
+from src.players.b12705048.agents.belief_ppo import BeliefPPO
 
 
 class RLAgent:
@@ -29,9 +29,7 @@ class RLAgent:
 
     Attributes:
         player_idx (int): This agent's seat index (0-3).
-        model (RecurrentPPO | None): The loaded RL model, or None if not found.
-        lstm_states: The hidden states for the LSTM.
-        episode_starts (np.ndarray): Array indicating if a new episode has started.
+        model (BeliefPPO | None): The loaded RL model, or None if not found.
     """
     def __init__(self, player_idx, model_path=None):
         """
@@ -43,8 +41,6 @@ class RLAgent:
                                      If None, defaults to 'stage3_model_final' in the same directory.
         """
         self.player_idx = player_idx
-        self.lstm_states = None
-        self.episode_starts = np.ones((1,), dtype=bool)
         
         if model_path is None:
             base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -52,7 +48,7 @@ class RLAgent:
 
         self.model = None
         if os.path.exists(f"{model_path}.zip"):
-            self.model = RecurrentPPO.load(model_path)
+            self.model = BeliefPPO.load(model_path)
             
             # Dynamically determine feature extractor based on model input space
             obs_dim = self.model.observation_space.shape[0]
@@ -84,8 +80,7 @@ class RLAgent:
             return min(hand)
             
         if len(hand) == 10:
-            self.lstm_states = None
-            self.episode_starts = np.ones((1,), dtype=bool)
+            pass # Episode start tracking is not needed for non-recurrent agents
             
         if isinstance(history, dict):
             board = history.get('board', [])
@@ -125,14 +120,10 @@ class RLAgent:
         sorted_hand = sorted(hand)
         n_hand = len(sorted_hand)
             
-        action, lstm_states = self.model.predict(
+        action, _ = self.model.predict(
             obs,
-            state=self.lstm_states,
-            episode_start=self.episode_starts,
             deterministic=True
         )
-        self.lstm_states = lstm_states
-        self.episode_starts[:] = False
         
         # ---- Phase 3: Action Resolution ----
         action = int(action)
