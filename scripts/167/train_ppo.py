@@ -35,43 +35,7 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 
-class SaveLatestCallback(BaseCallback):
-    """
-    A custom callback to periodically save the model as the latest version.
-    
-    This enables symmetric self-play by allowing the environment to load
-    the most up-to-date policy during League Training.
-    
-    Attributes:
-        save_freq (int): Number of steps between saves.
-        save_path (str): Directory where the model will be saved.
-        name_prefix (str): Filename prefix for the saved model.
-    """
-    def __init__(self, save_freq, save_path, name_prefix="rl_model_167_latest", verbose=1):
-        """
-        Initialize the SaveLatestCallback.
-        
-        Args:
-            save_freq (int): The frequency (in steps) to save the model.
-            save_path (str): The directory to save the model.
-            name_prefix (str): The filename for the model.
-            verbose (int): Verbosity level (0: no output, 1: info messages).
-        """
-        super(SaveLatestCallback, self).__init__(verbose)
-        self.save_freq = save_freq
-        self.save_path = save_path
-        self.name_prefix = name_prefix
 
-    def _on_step(self) -> bool:
-        """
-        Action to take at each step.
-        
-        Returns:
-            bool: True if the training should continue, False otherwise.
-        """
-        if self.n_calls % self.save_freq == 0:
-            self.model.save(os.path.join(self.save_path, self.name_prefix))
-        return True
 import gymnasium as gym
 import numpy as np
 from rl_env import SixNimmtEnv
@@ -269,26 +233,19 @@ def train_agent(test_mode=False, start_stage=1, start_model_path=None):
         model.save(f"{model_dir}/rl_model_167_stage3")
         env_stage3.close()
 
-    # ---- Phase 4: League Training (Mixed Opponents + Symmetric Self-play) ----
+    # ---- Phase 4: Training against FlatMC-UCB1 ----
     if start_stage <= 4:
-        historical_models = [
-            "src/players/b12705048/agents/models/rl_model_167_stage1c",
-            "src/players/b12705048/agents/models/rl_model_167_stage2",
-            "src/players/b12705048/agents/models/rl_model_167_stage3",
-            "src/players/b12705048/agents/models/rl_model_167_latest"
-        ]
         env_kwargs_stage4 = {
-            "opponent_type": "mixed",
-            "opponent_model_path": historical_models,
-            "opponent_time_limit": 0.01  # Use fast flatmc to speed up training
+            "opponent_type": "flatmc_ucb1",
+            "opponent_c_param": 10,
+            "opponent_time_limit": 0.1  # Use fast flatmc to speed up training
         }
         
-        # Increased envs to 8 since models are now cached efficiently
-        n_envs_selfplay = 8
-        print(f"Initializing environment for Stage 4 (League Training with {n_envs_selfplay} envs)...")
+        n_envs_stage4 = 8
+        print(f"Initializing environment for Stage 4 ({n_envs_stage4} envs)...")
         env_stage4 = make_vec_env(
             SixNimmtEnv, 
-            n_envs=n_envs_selfplay, 
+            n_envs=n_envs_stage4, 
             env_kwargs=env_kwargs_stage4,
             vec_env_cls=SubprocVecEnv
         )
@@ -302,18 +259,13 @@ def train_agent(test_mode=False, start_stage=1, start_model_path=None):
             load_path = start_model_path if start_model_path else f"{model_dir}/rl_model_167_stage3"
             print(f"Loading model from {load_path}...")
             model = BeliefPPO.load(load_path, env=env_stage4)
-            
-        # Save initially so environments have a latest model to load
-        model.save(f"{model_dir}/rl_model_167_latest")
-            
         steps_4 = 5000 if test_mode else 2_000_000
-        print(f"Starting Stage 4: League Training ({steps_4} steps)...")
+        print(f"Starting Stage 4 ({steps_4} steps)...")
         start_time = time.time()
         
-        checkpoint_callback_4 = CheckpointCallback(save_freq=100_000 // n_envs_selfplay, save_path=model_dir, name_prefix="rl_model_167_stage4")
-        save_latest_callback = SaveLatestCallback(save_freq=50_000 // n_envs_selfplay, save_path=model_dir)
+        checkpoint_callback_4 = CheckpointCallback(save_freq=100_000 // n_envs_stage4, save_path=model_dir, name_prefix="rl_model_167_stage4")
         
-        model.learn(total_timesteps=steps_4, callback=[checkpoint_callback_4, save_latest_callback])
+        model.learn(total_timesteps=steps_4, callback=checkpoint_callback_4)
         
         print(f"Phase 4 Complete in {time.time() - start_time:.2f}s")
         model.save(f"{model_dir}/rl_model_167_stage4")

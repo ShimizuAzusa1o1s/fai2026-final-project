@@ -22,6 +22,7 @@ from src.engine import Engine
 from src.players.b12705048.core.features_167 import extract_features, compute_unseen_cards
 from src.players.b12705048.agents.flatmc import FlatMC
 from src.players.b12705048.agents.greedy import Minimizer
+from src.players.b12705048.agents.flatmc_ucb1 import FlatMCUCB1
 
 class RLDummyPlayer:
     """
@@ -96,18 +97,25 @@ class SixNimmtEnv(gym.Env):
         agent.player_idx = player_idx
         return agent
 
-    def __init__(self, opponent_type="minimizer", opponent_time_limit=0.01, opponent_model_path=None, spawn_trick=0, reward_shaping_weight=0.0):
+    def __init__(self, opponent_type="minimizer", opponent_time_limit=0.01, opponent_model_path=None, spawn_trick=0, reward_shaping_weight=0.0, opponent_c_param=5.0):
         """
-        Initialize the SixNimmt environment.
+        Initialize the environment.
 
         Args:
-            opponent_type (str): Opponent type to spawn ("minimizer", "flatmc", or "rl_agent").
-            opponent_time_limit (float): Time budget for FlatMC opponents in seconds.
-            opponent_model_path (str | None): Model path for RLAgent opponents.
-            spawn_trick (int): How many tricks to fast-forward before the agent takes control.
-            reward_shaping_weight (float): Multiplier for heatmap-driven penalty shaping.
+            opponent_type (str): Type of opponent ('minimizer', 'flatmc', 'flatmc_ucb1', 'rl_agent', 'mixed').
+            opponent_time_limit (float): Time limit for FlatMC opponents.
+            opponent_model_path (str | None): Path for RLAgent opponents.
+            spawn_trick (int): Fast-forward tricks.
+            reward_shaping_weight (float): Heatmap penalty weight.
+            opponent_c_param (float): The UCB1 exploration constant (c_param) if using flatmc_ucb1.
         """
         super().__init__()
+        self.opponent_type = opponent_type
+        self.opponent_time_limit = opponent_time_limit
+        self.opponent_model_path = opponent_model_path
+        self.spawn_trick = spawn_trick
+        self.reward_shaping_weight = reward_shaping_weight
+        self.opponent_c_param = opponent_c_param
         
         self.action_space = spaces.Discrete(10)
         self.observation_space = spaces.Box(low=-1.0, high=1.0, shape=(167,), dtype=np.float32)
@@ -151,6 +159,11 @@ class SixNimmtEnv(gym.Env):
                 opp = FlatMC(player_idx=i)
                 opp.time_limit = self.opponent_time_limit
                 # Reduce batch size for short time budgets to prevent massive overshoots
+                if self.opponent_time_limit <= 0.05:
+                    opp.batch_size = 500
+            elif current_opp_type == "flatmc_ucb1":
+                opp = FlatMCUCB1(player_idx=i, c_param=self.opponent_c_param)
+                opp.time_limit = self.opponent_time_limit
                 if self.opponent_time_limit <= 0.05:
                     opp.batch_size = 500
             elif current_opp_type == "minimizer":
