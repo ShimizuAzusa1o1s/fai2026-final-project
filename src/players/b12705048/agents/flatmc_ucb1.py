@@ -36,7 +36,7 @@ class FlatMCUCB1:
         bullhead_lookup (np.ndarray): O(1) bullhead penalty lookup array.
     """
 
-    def __init__(self, player_idx, c_param=5.0):
+    def __init__(self, player_idx, c_param=10.0):
         """
         Initialize the UCB1 MC player.
 

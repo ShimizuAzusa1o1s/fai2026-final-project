@@ -47,7 +47,7 @@ class ISMCTS:
         c_param (float): UCB1 exploration constant.
         time_limit (float): Simulation budget in seconds.
     """
-    def __init__(self, player_idx, c_param=5.0):
+    def __init__(self, player_idx, c_param=10.0):
         self.player_idx = player_idx
         self.c_param = c_param
         self.time_limit = 0.8
