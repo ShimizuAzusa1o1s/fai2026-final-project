@@ -9,19 +9,18 @@ Core Mechanism:
       ``np.ndarray`` forms, eliminating duplication across modules.
 
 Characteristics:
-    - **BULLHEADS**: Immutable tuple for pure-Python callers (features, fast_game).
+    - **BULLHEADS**: Immutable tuple (index 0 unused; cards 1–104).
     - **BULLHEAD_LOOKUP**: Pre-built NumPy int32 array for vectorized agents.
 
 See Also:
-    ``features_143.py``, ``features_167.py`` — Import ``BULLHEADS`` from here.
-    ``flatmc.py``, ``flatmc_minmax.py`` — Import ``BULLHEAD_LOOKUP`` from here.
+    ``flatmc.py``, ``flatmc_ucb1.py`` — Import ``BULLHEAD_LOOKUP`` from here.
 """
 
 import numpy as np
 
 # ── Bullhead (penalty-point) lookup table ──────────────────────────────────────
 # Index 0 is unused (cards are 1–104). Follows official 6 Nimmt! scoring:
-#   card 55       → 7 bullheads
+#   card 55         → 7 bullheads
 #   multiples of 11 → 5 bullheads
 #   multiples of 10 → 3 bullheads
 #   multiples of 5  → 2 bullheads

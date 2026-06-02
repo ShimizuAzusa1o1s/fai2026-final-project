@@ -1,32 +1,20 @@
 """
-UCB1 Monte Carlo (1-Ply) Player Module — Vectorized SoA Variant.
+UCB1 Monte Carlo (1-Ply) Player Module — Softmax Rollout Variant.
 
 This module implements a 1-ply Monte Carlo agent that uses the UCB1 bandit
-algorithm to dynamically allocate simulation budget across candidate cards,
-combined with an epsilon-greedy min-max rollout policy.
+algorithm to dynamically allocate simulation budget across candidate cards.
+Unlike the standard uniform epsilon-greedy rollout, this variant uses a 
+Softmax probability distribution based on the card's immediate delta to the 
+initial board state for the "explore" fraction of rollouts.
 
 Algorithm:
-    1. Build SoA arrays for ``batch_size`` independent games.
-    2. Randomly assign unseen cards to opponents via vectorized argsort.
-    3. Allocate simulation budget per candidate using UCB1 (lower-cost-bound
-       variant): unvisited candidates are sampled first; thereafter the
-       candidate minimising ``avg_penalty − c·√(ln N / n)`` is explored.
-    4. During rollout, simulated players choose their minimum or maximum card
-       with 50/50 probability (min-max policy), with an ``epsilon`` fraction
-       of rollouts falling back to uniform random.
+    1. Build SoA arrays for `batch_size` independent games.
+    2. Compute a Safety Score array for all cards relative to the initial board.
+    3. Allocate simulation budget per candidate using UCB1.
+    4. During rollout, the explore fraction uses the Gumbel-Max trick over the
+       Safety Scores to probabilistically order the cards favoring safe moves.
     5. Simulate all tricks across all games simultaneously using NumPy.
     6. Repeat until the wall-clock budget expires.
-
-Characteristics:
-    - **Depth**: 1-ply (evaluates the immediate action only).
-    - **Rollout Policy**: Epsilon-greedy min-max stochastic rollout.
-    - **Budget Allocation**: UCB1-guided dynamic allocation per candidate.
-    - **SIMD Batching**: All games evaluated in one NumPy call per trick.
-    - **Time Management**: Repeats batches until wall-clock budget expires.
-
-See Also:
-    ``flatmc.py`` — Uniform random rollout with uniform budget allocation.
-    ``greedy.py`` — Simpler deterministic baseline (no simulation).
 """
 
 import time
@@ -35,9 +23,10 @@ import numpy as np
 
 from src.players.b12705048.core.constants import BULLHEAD_LOOKUP
 
-class FlatMCUCB1:
+class FlatMCUCB1Softmax:
     """
-    Vectorized 1-ply Monte Carlo agent using UCB1 for dynamic candidate exploration and exploitation.
+    Vectorized 1-ply Monte Carlo agent using UCB1 for budget allocation and
+    a Softmax-based exploration policy using the Gumbel-Max trick.
 
     Attributes:
         player_idx (int): This agent's seat index (0-3).
@@ -47,27 +36,29 @@ class FlatMCUCB1:
         bullhead_lookup (np.ndarray): O(1) bullhead penalty lookup array.
     """
 
-    def __init__(self, player_idx, c_param=5.0, epsilon=0.1, time_limit=0.8):
+    def __init__(self, player_idx, c_param=5.0, epsilon=0.1, tau=10.0, time_limit=0.8):
         """
-        Initialize the UCB1 MC player.
+        Initialize the UCB1 Softmax MC player.
 
         Args:
             player_idx (int): The player's seat index in the game (0-3).
             c_param (float): Exploration constant for UCB1.
             epsilon (float): Ratio of random rollouts (0.0 to 1.0) mixed into the min-max policy.
+            tau (float): Temperature parameter for the Softmax distribution.
             time_limit (float): Simulation budget in seconds.
         """
         self.player_idx = player_idx
         self.c_param = c_param
         self.time_limit = time_limit
         self.epsilon = epsilon
+        self.tau = tau
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
         self.bullhead_lookup = BULLHEAD_LOOKUP
 
     def action(self, hand, history):
         """
-        Evaluate candidate cards via batched SoA simulation with min-max rollout.
+        Evaluate candidate cards via batched SoA simulation with Softmax rollout.
 
         Args:
             hand (list[int]): Cards currently available to play.
@@ -104,6 +95,38 @@ class FlatMCUCB1:
         orig_tails = np.array([row[-1] for row in board], dtype=np.int32)
         orig_lengths = np.array([len(row) for row in board], dtype=np.int32)
         orig_rbulls = np.array([sum(self.bullhead_lookup[c] for c in row) for row in board], dtype=np.int32)
+
+        # ---- Phase 1.5: Compute Safety Scores S(c) ----
+        # Fully vectorized computation against initial board
+        deltas = np.arange(105)[:, None] - orig_tails[None, :]
+        valid_mask = deltas > 0
+        
+        masked_deltas = np.where(valid_mask, deltas, np.inf)
+        min_deltas = np.min(masked_deltas, axis=1)
+        target_rows = np.argmin(masked_deltas, axis=1)
+        
+        is_invalid = np.isinf(min_deltas)
+        
+        target_lengths = orig_lengths[target_rows]
+        target_rbulls = orig_rbulls[target_rows]
+        
+        S = np.zeros(105, dtype=np.float32)
+        
+        cond1 = (~is_invalid) & (target_lengths < 5)
+        S[cond1] = -min_deltas[cond1]
+        
+        cond2 = (~is_invalid) & (target_lengths == 5)
+        S[cond2] = -(10.0 * target_rbulls[cond2])
+        
+        S[is_invalid] = -100.0
+        
+        # Static Priors B(c)
+        B = np.zeros(105, dtype=np.float32)
+        B[1:11] = 2.0
+        B[95:105] = 2.0
+        
+        S += B
+        # -----------------------------------------------
 
         unseen_mask_base = np.zeros(105, dtype=bool)
         unseen_mask_base[unseen_cards] = True
@@ -149,7 +172,6 @@ class FlatMCUCB1:
 
             opp_indices = [i for i in range(4) if i != self.player_idx]
 
-            # Vectorized Min/Max Rollout Generation for Opponents
             opp_hands_unsorted = np.zeros((actual_batch_size, 3, n_turns), dtype=np.int32)
             opp_hands_unsorted[:, 0, :] = perm[:, 0:n_turns]
             opp_hands_unsorted[:, 1, :] = perm[:, n_turns:2*n_turns]
@@ -168,7 +190,17 @@ class FlatMCUCB1:
             chosen_opp_cards = np.take_along_axis(opp_hands, selected_indices, axis=2)
 
             eps_mask_opp = np.random.rand(actual_batch_size, 3, 1) < self.epsilon
-            final_opp_cards = np.where(eps_mask_opp, opp_hands_unsorted, chosen_opp_cards)
+            
+            # --- SOFTMAX EXPLORE (Gumbel-Max) ---
+            opp_scores = S[opp_hands_unsorted]
+            U_opp = np.random.uniform(1e-8, 1.0 - 1e-8, size=(actual_batch_size, 3, n_turns))
+            noisy_opp_scores = (opp_scores / self.tau) - np.log(-np.log(U_opp))
+            
+            sort_idx_opp = np.argsort(-noisy_opp_scores, axis=2)
+            softmax_opp_cards = np.take_along_axis(opp_hands_unsorted, sort_idx_opp, axis=2)
+            # ------------------------------------
+
+            final_opp_cards = np.where(eps_mask_opp, softmax_opp_cards, chosen_opp_cards)
 
             hands_array = np.zeros((actual_batch_size, 4, n_turns), dtype=np.int32)
             hands_array[:, opp_indices[0], :] = final_opp_cards[:, 0, :]
@@ -205,14 +237,21 @@ class FlatMCUCB1:
                     
                     chosen_my = np.take_along_axis(my_hands_chunk, sel_my, axis=1)
                     
+                    eps_mask_my = np.random.rand(sims_per_cand, 1) < self.epsilon
+                    
+                    # --- SOFTMAX EXPLORE (Gumbel-Max) ---
                     my_rest_arr = np.array(my_rest, dtype=np.int32)
                     my_hands_unsorted = np.tile(my_rest_arr, (sims_per_cand, 1))
-                    rand_my = np.random.rand(sims_per_cand, n_rem)
-                    my_perm = np.argsort(rand_my, axis=1)
-                    my_hands_random = np.take_along_axis(my_hands_unsorted, my_perm, axis=1)
                     
-                    eps_mask_my = np.random.rand(sims_per_cand, 1) < self.epsilon
-                    final_my = np.where(eps_mask_my, my_hands_random, chosen_my)
+                    my_scores = S[my_hands_unsorted]
+                    U_my = np.random.uniform(1e-8, 1.0 - 1e-8, size=(sims_per_cand, n_rem))
+                    noisy_my_scores = (my_scores / self.tau) - np.log(-np.log(U_my))
+                    
+                    my_perm = np.argsort(-noisy_my_scores, axis=1)
+                    my_hands_softmax = np.take_along_axis(my_hands_unsorted, my_perm, axis=1)
+                    # ------------------------------------
+                    
+                    final_my = np.where(eps_mask_my, my_hands_softmax, chosen_my)
                     
                     hands_array[start_b:end_b, self.player_idx, 1:] = final_my
 

@@ -15,7 +15,7 @@ This is a competitive AI agent project for the card game **6 Nimmt!** (Take 6!).
 - **6th-card rule**: Playing the 6th card onto a row forces you to take all 5 existing cards (penalty).
 - **Low-card rule**: If your card is lower than all row tops, you take the row with the lowest total penalty (tie-break: fewest cards → lowest index).
 
-**Tech Stack**: Python 3.13, NumPy, PyTorch, Stable-Baselines3 (sb3-contrib for MaskablePPO), Gymnasium.
+**Tech Stack**: Python 3.13, NumPy.
 
 ---
 
@@ -28,34 +28,37 @@ final-project/
 │   ├── game_utils.py             # Utility functions for game setup
 │   ├── tournament_runner.py      # Tournament orchestrator
 │   └── players/
+│       ├── TA/                   # TA-provided baseline players (compiled .so)
+│       │   ├── random_player.py
+│       │   ├── human_player.py
+│       │   ├── public_baselines1.*.so   # Baselines 1–5
+│       │   └── public_baselines2.*.so   # Baselines 6–10
 │       └── b12705048/            # ★ OUR AGENT PACKAGE
 │           ├── methods.md        # Research log of attempted methods
 │           ├── agents/           # Production agent implementations
 │           │   ├── greedy.py         # Minimizer / Maximizer baselines
 │           │   ├── flatmc.py         # ★ Vectorized Flat Monte Carlo (primary)
-│           │   ├── flatmc_bimodal.py # Bimodal budget allocation variant
-│           │   ├── flatmc_ucb1.py    # UCB1 dynamic allocation variant
-│           │   ├── flatmc_minmax.py  # Min/Max rollout variant of FlatMC
-│           │   ├── mcts_agent.py     # Information Set MCTS (tree search)
-│           │   ├── rl_agent.py       # PPO RL agent wrapper (inference only)
-│           │   └── models/           # Trained RL model checkpoints (.zip)
+│           │   └── flatmc_ucb1.py    # UCB1 dynamic budget allocation variant
 │           └── core/             # Shared utility modules
-│               ├── __init__.py
-│               ├── fast_game.py      # Lightweight game simulator for MCTS
-│               ├── features_143.py   # 143-dim feature extractor
-│               └── features_167.py   # 167-dim feature extractor (adds heatmaps)
-├── scripts/
-│   ├── 143/                      # Training pipeline for 143-dim model
-│   │   ├── rl_env.py                 # Gymnasium env wrapper (143-dim obs)
-│   │   └── train_ppo.py             # 5-stage curriculum training script
-│   └── 167/                      # Training pipeline for 167-dim model
-│       ├── rl_env.py                 # Gymnasium env wrapper (167-dim obs + spawn_trick + reward shaping)
-│       └── train_ppo.py             # 4-stage curriculum + league training script
-├── configs/                      # JSON configs for games and tournaments
+│               └── constants.py      # Bullhead lookup table (single source of truth)
+├── configs/
+│   ├── game/                     # Single-game JSON configs
+│   │   ├── game-example.json         # Minimal example with TA random players
+│   │   ├── single-test.json          # FlatMC vs random players
+│   │   └── single-rl-test.json       # Stub for RL agent test (agent removed)
+│   ├── tournament/               # Tournament JSON configs
+│   │   ├── baseline-example.json     # Example: players vs Baselines 1–5
+│   │   ├── baseline-test-easy.json   # FlatMC/UCB1 vs Baselines 1–5
+│   │   └── baseline-test-hard.json   # FlatMC/UCB1 vs Baselines 9–10
+│   └── server/                   # Remote tournament server connection configs
+│       ├── flatmc_ucb1.json          # Connect to ws6.csie.org with FlatMCUCB1
+│       └── flatmc_ucb1_rapid.json    # Rapid time-limit variant for server
 ├── results/                      # Tournament result outputs
+│   ├── game/                         # Single-game result JSONs
+│   └── tournament/                   # Tournament result JSONs
 ├── run_single_game.py            # Single game runner
-├── run_tournament.py             # Tournament runner
-└── client.py                     # Client for remote tournament server
+├── run_tournament.py             # Tournament runner (combination / random_partition / grouped)
+└── client.py                     # Async TLS client for remote tournament server
 ```
 
 ---
@@ -67,11 +70,7 @@ final-project/
 | **Minimizer** | `agents/greedy.py` | Always plays lowest card | 0-ply | O(1) | N/A |
 | **Maximizer** | `agents/greedy.py` | Always plays highest card | 0-ply | O(1) | N/A |
 | **FlatMC** | `agents/flatmc.py` | 1-ply MC with uniform random rollout | 1-ply | 0.1s | ✅ NumPy SoA |
-| **FlatMCBimodal** | `agents/flatmc_bimodal.py` | 1-ply MC with static bimodal budget allocation | 1-ply | 0.8s | ✅ NumPy SoA |
-| **FlatMCUCB1** | `agents/flatmc_ucb1.py` | 1-ply MC with dynamic UCB1 budget allocation | 1-ply | 0.8s | ✅ NumPy SoA |
-| **FlatMCMinMax** | `agents/flatmc_minmax.py` | 1-ply MC with min/max stochastic rollout | 1-ply | 0.9s | ✅ NumPy SoA |
-| **MCTSAgent** | `agents/mcts_agent.py` | Open-loop IS-MCTS with UCB1 + min/max rollout | Variable | 0.9s | ❌ Pure Python |
-| **RLAgent** | `agents/rl_agent.py` | MaskablePPO policy network (inference only) | 1-ply | O(1) | N/A |
+| **FlatMCUCB1** | `agents/flatmc_ucb1.py` | 1-ply MC with UCB1 budget allocation + epsilon-greedy min-max rollout | 1-ply | 0.8s | ✅ NumPy SoA |
 
 ### Agent Interface Contract
 
@@ -88,33 +87,42 @@ The `history` dict contains: `board`, `scores`, `round`, `history_matrix`, `boar
 
 ## 4. Core Modules
 
-### `core/fast_game.py`
-Lightweight 4-player simulator used by MCTS. Mirrors `src/engine.py` rules exactly (verified). Currently hardcodes 5-card row capacity and imports `features_143`. Provides `FastGame.deal_random()`, `clone()`, `resolve_round()`, and `get_info_set_features()`.
+### `core/constants.py` — Shared Game Constants
+The **single source of truth** for all game constants. Provides:
+- `BULLHEADS: tuple[int, ...]` — immutable lookup, `BULLHEADS[card]` → penalty value.
+- `BULLHEAD_LOOKUP: np.ndarray` — NumPy `int32` array for O(1) vectorized lookups.
 
-### `core/features_143.py` — 143-Dimensional Feature Vector
-Base feature extractor. Layout: 15 board features + 100 card features (10 slots × 10) + 28 extended features (scores, unseen distribution, opponent history).
-
-### `core/features_167.py` — 167-Dimensional Feature Vector
-Extended feature extractor. Adds 2 extra per-card features (gap bullheads, gap density) and 8 probabilistic threat heatmap features per row. Total: 15 + 120 (10 × 12) + 32 extended.
-
-### Bullhead Lookup Table
-Defined as `BULLHEADS` tuple in both feature modules. Also duplicated as `self.bullhead_lookup` NumPy array in `flatmc.py` and `flatmc_minmax.py`. All four copies are consistent.
+Both `flatmc.py` and `flatmc_ucb1.py` import `BULLHEAD_LOOKUP` from here.
 
 ---
 
-## 5. Training Pipeline
+## 5. Configs Reference
 
-### 143-Dim Pipeline (`scripts/143/`)
-5-stage curriculum: Minimizer → Truncated FlatMC (0.01s) → Full FlatMC (0.10s) → Self-play vs Stage 1 → Self-play vs Stage 2. Uses 16 `SubprocVecEnv` workers.
+### Single-Game Configs (`configs/game/`)
+Run with `python run_single_game.py --config <path>`. Saves results to `results/game/`.
 
-### 167-Dim Pipeline (`scripts/167/`)
-4-stage curriculum with sub-phases: Stage 1 has 3 sub-phases (spawn_trick 7→4→0 with decreasing reward shaping) → Stage 2: Truncated FlatMC → Stage 3: Full FlatMC → Stage 4: League Training (mixed opponents + symmetric self-play with hot model reload). Uses `SaveLatestCallback` for continuous model updates during league play.
+| File | Contents |
+|---|---|
+| `game-example.json` | 4× TA random players — minimal smoke test |
+| `single-test.json` | FlatMC vs 3× random players, verbose output |
+| `single-rl-test.json` | Stub config referencing removed RLAgent — **do not use** |
 
-### Available Trained Models (in `agents/models/`)
-- `rl_model_143_stage3.zip`, `rl_model_143_stage5.zip`
-- `rl_model_167_stage1a/1b/1c.zip`, `rl_model_167_stage2/3/4.zip`, `rl_model_167_latest.zip`
+### Tournament Configs (`configs/tournament/`)
+Run with `python run_tournament.py --config <path>`. Saves results to `results/tournament/`.
 
-The default model loaded by `RLAgent` is `rl_model_167_stage3`.
+| File | Contents |
+|---|---|
+| `baseline-example.json` | Reference config: players vs Baselines 1–5 |
+| `baseline-test-easy.json` | FlatMC + FlatMCUCB1 vs Baselines 1–5 |
+| `baseline-test-hard.json` | FlatMC + FlatMCUCB1 vs Baselines 9–10 |
+
+### Server Configs (`configs/server/`)
+Used by `python client.py <config>` to connect to the remote open tournament.
+
+| File | Agent | Label |
+|---|---|---|
+| `flatmc_ucb1.json` | FlatMCUCB1 (`c_param=10.0`, `epsilon=0.2`, `time_limit=0.8`) | IzumikV1.0 |
+| `flatmc_ucb1_rapid.json` | FlatMCUCB1 (rapid time-limit variant) | — |
 
 ---
 
@@ -135,42 +143,40 @@ Complex methods use structured inline dividers:
 
 ### Folder Conventions
 - `agents/` — Production-ready agent classes only
-- `core/` — Shared utilities (feature extractors, game simulator)
-- `scripts/` — Training scripts organized by feature dimension
+- `core/` — Shared utilities (constants, future simulators)
+- `configs/game/` — Single-game configs
+- `configs/tournament/` — Tournament configs
+- `configs/server/` — Remote server connection configs
 
 ---
 
 ## 7. Known Issues & Technical Debt
 
-### Resolved (2026-05-31)
-- ~~Stale `See Also:` cross-references~~ → All fixed to point to current filenames.
-- ~~Bullhead lookup table duplicated across 4 files~~ → Consolidated into `core/constants.py`.
-- ~~`mcts_agent.py` UCB1 `c_param=20.0`~~ → Reduced to 5.0 with documented rationale.
-- ~~`flatmc_minmax.py` and `mcts_agent.py` `time_limit=0.9s`~~ → Reduced to 0.8s.
-- ~~`rl_agent.py` `evaluate_batch` docstring inaccuracy~~ → Fixed to document both 143/167.
-- ~~Training scripts duplicate imports and unused `import copy`~~ → Cleaned up.
-- ~~`MCTSNode` missing `Attributes:` docstring~~ → Added full attribute documentation.
+### Resolved (2026-05-31 — 2026-06-02)
+- ~~Stale `See Also:` cross-references~~ → Fixed to point to current filenames.
+- ~~Bullhead lookup table duplicated across files~~ → Consolidated into `core/constants.py`.
+- ~~`flatmc_ucb1.py` module docstring described MinMax rollout~~ → Fixed to accurately describe UCB1 + epsilon-greedy min-max algorithm.
+- ~~`flatmc_minmax.py`, `mcts_agent.py`, `rl_agent.py`, `flatmc_bimodal.py`~~ → Removed in cleanup.
+- ~~`core/fast_game.py`, `core/features_143.py`, `core/features_167.py`~~ → Removed in cleanup.
+- ~~`scripts/` training pipeline~~ → Removed in cleanup (RL training abandoned).
 
 ### Remaining Technical Debt
-- `fast_game.py` hardcodes 143-dim features only; no 167-dim variant for MCTS.
-- MCTS agent (`mcts_agent.py`) is pure Python — could benefit from NumPy vectorization for higher throughput.
+- `configs/game/single-rl-test.json` references removed `RLAgent` — either update or delete.
+- `BULLHEADS` tuple in `core/constants.py` is not currently imported by any active module (only `BULLHEAD_LOOKUP` is used); it can be removed or kept as future utility.
 
 ---
 
 ## 8. Quick Reference: How to Run
 
 ```bash
-# Single game
-python run_single_game.py --config configs/game/example.json
+# Single game (verbose, FlatMC vs random)
+python run_single_game.py --config configs/game/single-test.json
 
-# Tournament
-python run_tournament.py --config configs/tournament/example.json
+# Local tournament vs Baselines 9–10
+python run_tournament.py --config configs/tournament/baseline-test-hard.json
 
-# Train 167-dim RL agent
-cd scripts/167 && python train_ppo.py --start-stage 1
-
-# Train with checkpoint resume
-cd scripts/167 && python train_ppo.py --start-stage 3 --start-model path/to/model
+# Remote open tournament (connect to ws6.csie.org)
+python client.py configs/server/flatmc_ucb1.json
 ```
 
 ---
@@ -180,5 +186,6 @@ cd scripts/167 && python train_ppo.py --start-stage 3 --start-model path/to/mode
 1. **Google Style Python Docstrings** enforced for all modules, classes, and functions.
 2. **Module-Level Docstrings** must include Algorithm, Characteristics, and See Also sections.
 3. **Phase Dividers** (e.g., `# ---- Phase 1: State Parsing ----`) for complex methods.
-4. New agents go in `agents/`, shared utilities in `core/`, training scripts in `scripts/<dim>/`.
+4. New agents go in `agents/`, shared utilities in `core/`.
 5. All NumPy arrays should use explicit dtypes (`np.int32`, `np.float32`).
+6. `core/constants.py` is the single source of truth for game constants — do not redefine bullhead tables in agent files.
