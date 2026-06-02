@@ -21,9 +21,12 @@
             "P1"
         ],
         [
-            "src.players.b12705048.agents.ismcts",
-            "ISMCTS",
-            {},
+            "src.players.b12705048.agents.flatmc_belief",
+            "FlatMCBelief",
+            {
+                "c_param": 10.0,
+                "belief_model_path": "src/players/b12705048/agents/models/rl_model_167_stage3"
+            },
             "P2"
         ]
     ],
