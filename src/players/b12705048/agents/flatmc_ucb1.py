@@ -36,7 +36,7 @@ class FlatMCUCB1:
         bullhead_lookup (np.ndarray): O(1) bullhead penalty lookup array.
     """
 
-    def __init__(self, player_idx, c_param=5.0, epsilon=0.1):
+    def __init__(self, player_idx, c_param=5.0, epsilon=0.1, time_limit=0.8):
         """
         Initialize the UCB1 MC player.
 
@@ -44,10 +44,11 @@ class FlatMCUCB1:
             player_idx (int): The player's seat index in the game (0-3).
             c_param (float): Exploration constant for UCB1.
             epsilon (float): Ratio of random rollouts (0.0 to 1.0) mixed into the min-max policy.
+            time_limit (float): Simulation budget in seconds.
         """
         self.player_idx = player_idx
         self.c_param = c_param
-        self.time_limit = 0.8
+        self.time_limit = time_limit
         self.epsilon = epsilon
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch

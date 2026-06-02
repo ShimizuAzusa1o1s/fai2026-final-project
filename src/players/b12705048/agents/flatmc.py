@@ -50,15 +50,16 @@ class FlatMC:
         bullhead_lookup (np.ndarray): O(1) bullhead penalty lookup array.
     """
 
-    def __init__(self, player_idx):
+    def __init__(self, player_idx, time_limit=0.1):
         """
         Initialize the Vectorized Flat Monte Carlo player.
 
         Args:
             player_idx (int): The player's seat index in the game (0–3).
+            time_limit (float): Simulation budget in seconds.
         """
         self.player_idx = player_idx
-        self.time_limit = 0.1
+        self.time_limit = time_limit
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
         self.bullhead_lookup = BULLHEAD_LOOKUP
