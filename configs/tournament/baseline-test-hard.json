@@ -23,12 +23,11 @@
             "P1"
         ],
         [
-            "src.players.b12705048.agents.flatmc_ucb1_sm",
-            "FlatMCUCB1Softmax",
+            "src.players.b12705048.agents.flatmc_ucb1_2ply",
+            "FlatMCUCB1_2Ply",
             {
                 "c_param": 10.0,
                 "epsilon": 0.2,
-                "tau": 10.0,
                 "time_limit": 0.8
             },
             "P2"
