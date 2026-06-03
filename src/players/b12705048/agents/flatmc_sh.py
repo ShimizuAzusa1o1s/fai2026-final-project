@@ -1,20 +1,33 @@
 """
-Successive Halving Monte Carlo (1-Ply) Player Module — Vectorized SoA Variant.
+Successive Halving Monte Carlo (1-Ply) Player Module — Softmax Rollout Variant.
 
 This module implements a 1-ply Monte Carlo agent that uses the Successive
 Halving (SH) algorithm to allocate simulation budget across candidate cards.
-The rollout policy uses an epsilon-greedy min-max mixed with random uniform
-rollouts.
+Unlike the standard uniform epsilon-greedy rollout, this variant uses a 
+Softmax probability distribution based on the card's immediate delta to the 
+initial board state for the "explore" fraction of rollouts.
 
 Algorithm:
-    1. Build SoA arrays for ``batch_size`` independent games.
-    2. Divide the total wall-clock time limit into stages based on the
+    1. Build SoA arrays for `batch_size` independent games.
+    2. Compute a Safety Score array for all cards relative to the initial board.
+    3. Divide the total wall-clock time limit into stages based on the
        number of initial candidate cards (log2(N) stages).
-    3. In each stage, allocate simulation batches evenly across all currently
+    4. In each stage, allocate simulation batches evenly across all currently
        active candidates.
-    4. At the end of a stage, keep only the top half of candidates with the
+    5. During rollout, the explore fraction uses the Gumbel-Max trick over the
+       Safety Scores to probabilistically order the cards favoring safe moves.
+    6. At the end of a stage, keep only the top half of candidates with the
        lowest average simulated penalty.
-    5. Repeat until the final stage ends, returning the best remaining card.
+    7. Repeat until the final stage ends, returning the best remaining card.
+
+Characteristics:
+    - O(1) batched SIMD simulation per rollout
+    - Successive Halving for uniform elimination budget allocation
+    - Softmax-based exploration (epsilon portion)
+
+See Also:
+    - `flatmc.py`
+    - `flatmc_dirichlet.py`
 """
 
 import time
@@ -25,7 +38,8 @@ from src.players.b12705048.core.constants import BULLHEAD_LOOKUP
 
 class FlatMCSH:
     """
-    Vectorized 1-ply Monte Carlo agent using Successive Halving for budget allocation.
+    Vectorized 1-ply Monte Carlo agent using Successive Halving for budget allocation
+    and a Softmax-based exploration policy using the Gumbel-Max trick.
 
     Attributes:
         player_idx (int): This agent's seat index (0-3).
@@ -35,25 +49,28 @@ class FlatMCSH:
         bullhead_lookup (np.ndarray): O(1) bullhead penalty lookup array.
     """
 
-    def __init__(self, player_idx, epsilon=0.1, time_limit=0.8):
+    def __init__(self, player_idx, epsilon=0.1, tau=10.0, time_limit=0.8):
         """
-        Initialize the Successive Halving MC player.
+        Initialize the Successive Halving Softmax MC player.
 
         Args:
             player_idx (int): The player's seat index in the game (0-3).
             epsilon (float): Ratio of random rollouts (0.0 to 1.0) mixed into the min-max policy.
+            tau (float): Temperature parameter for the Softmax distribution.
             time_limit (float): Simulation budget in seconds.
         """
         self.player_idx = player_idx
         self.time_limit = time_limit
         self.epsilon = epsilon
+        self.tau = tau
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
         self.bullhead_lookup = BULLHEAD_LOOKUP
 
     def action(self, hand, history):
         """
-        Evaluate candidate cards via Successive Halving batched SoA simulation.
+        Evaluate candidate cards via Successive Halving batched SoA simulation
+        with Softmax rollout.
 
         Args:
             hand (list[int]): Cards currently available to play.
@@ -90,6 +107,38 @@ class FlatMCSH:
         orig_tails = np.array([row[-1] for row in board], dtype=np.int32)
         orig_lengths = np.array([len(row) for row in board], dtype=np.int32)
         orig_rbulls = np.array([sum(self.bullhead_lookup[c] for c in row) for row in board], dtype=np.int32)
+
+        # ---- Phase 1.5: Compute Safety Scores S(c) ----
+        # Fully vectorized computation against initial board
+        deltas = np.arange(105)[:, None] - orig_tails[None, :]
+        valid_mask = deltas > 0
+        
+        masked_deltas = np.where(valid_mask, deltas, np.inf)
+        min_deltas = np.min(masked_deltas, axis=1)
+        target_rows = np.argmin(masked_deltas, axis=1)
+        
+        is_invalid = np.isinf(min_deltas)
+        
+        target_lengths = orig_lengths[target_rows]
+        target_rbulls = orig_rbulls[target_rows]
+        
+        S = np.zeros(105, dtype=np.float32)
+        
+        cond1 = (~is_invalid) & (target_lengths < 5)
+        S[cond1] = -min_deltas[cond1]
+        
+        cond2 = (~is_invalid) & (target_lengths == 5)
+        S[cond2] = -(10.0 * target_rbulls[cond2])
+        
+        S[is_invalid] = -100.0
+        
+        # Static Priors B(c)
+        B = np.zeros(105, dtype=np.float32)
+        B[1:11] = 2.0
+        B[95:105] = 2.0
+        
+        S += B
+        # -----------------------------------------------
 
         unseen_mask_base = np.zeros(105, dtype=bool)
         unseen_mask_base[unseen_cards] = True
@@ -141,7 +190,17 @@ class FlatMCSH:
                 chosen_opp_cards = np.take_along_axis(opp_hands, selected_indices, axis=2)
 
                 eps_mask_opp = np.random.rand(actual_batch_size, 3, 1) < self.epsilon
-                final_opp_cards = np.where(eps_mask_opp, opp_hands_unsorted, chosen_opp_cards)
+                
+                # --- SOFTMAX EXPLORE (Gumbel-Max) ---
+                opp_scores = S[opp_hands_unsorted]
+                U_opp = np.random.uniform(1e-8, 1.0 - 1e-8, size=(actual_batch_size, 3, n_turns))
+                noisy_opp_scores = (opp_scores / self.tau) - np.log(-np.log(U_opp))
+                
+                sort_idx_opp = np.argsort(-noisy_opp_scores, axis=2)
+                softmax_opp_cards = np.take_along_axis(opp_hands_unsorted, sort_idx_opp, axis=2)
+                # ------------------------------------
+                
+                final_opp_cards = np.where(eps_mask_opp, softmax_opp_cards, chosen_opp_cards)
 
                 hands_array = np.zeros((actual_batch_size, 4, n_turns), dtype=np.int32)
                 hands_array[:, opp_indices[0], :] = final_opp_cards[:, 0, :]
@@ -180,12 +239,19 @@ class FlatMCSH:
                         
                         my_rest_arr = np.array(my_rest, dtype=np.int32)
                         my_hands_unsorted = np.tile(my_rest_arr, (sims_per_cand, 1))
-                        rand_my = np.random.rand(sims_per_cand, n_rem)
-                        my_perm = np.argsort(rand_my, axis=1)
-                        my_hands_random = np.take_along_axis(my_hands_unsorted, my_perm, axis=1)
                         
                         eps_mask_my = np.random.rand(sims_per_cand, 1) < self.epsilon
-                        final_my = np.where(eps_mask_my, my_hands_random, chosen_my)
+                        
+                        # --- SOFTMAX EXPLORE (Gumbel-Max) ---
+                        my_scores = S[my_hands_unsorted]
+                        U_my = np.random.uniform(1e-8, 1.0 - 1e-8, size=(sims_per_cand, n_rem))
+                        noisy_my_scores = (my_scores / self.tau) - np.log(-np.log(U_my))
+                        
+                        my_perm = np.argsort(-noisy_my_scores, axis=1)
+                        my_hands_softmax = np.take_along_axis(my_hands_unsorted, my_perm, axis=1)
+                        # ------------------------------------
+                        
+                        final_my = np.where(eps_mask_my, my_hands_softmax, chosen_my)
                         
                         hands_array[start_b:end_b, self.player_idx, 1:] = final_my
 

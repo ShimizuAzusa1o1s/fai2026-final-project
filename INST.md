@@ -70,7 +70,8 @@ final-project/
 | **Minimizer** | `agents/greedy.py` | Always plays lowest card | 0-ply | O(1) | N/A |
 | **Maximizer** | `agents/greedy.py` | Always plays highest card | 0-ply | O(1) | N/A |
 | **FlatMC** | `agents/flatmc.py` | 1-ply MC with uniform random rollout | 1-ply | 0.1s | ✅ NumPy SoA |
-| **FlatMCUCB1** | `agents/flatmc_ucb1.py` | 1-ply MC with UCB1 budget allocation + epsilon-greedy min-max rollout | 1-ply | 0.8s | ✅ NumPy SoA |
+| **FlatMCSH** | `agents/flatmc_sh.py` | 1-ply MC with Successive Halving budget allocation + Softmax exploration | 1-ply | 0.8s | ✅ NumPy SoA |
+| **FlatMCDirichlet** | `agents/flatmc_dirichlet.py` | 1-ply MC with Bayesian Thompson Sampling budget allocation | 1-ply | 0.8s | ✅ NumPy SoA |
 
 ### Agent Interface Contract
 

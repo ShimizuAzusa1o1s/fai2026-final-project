@@ -15,20 +15,18 @@
     ],
     "players": [
         [
-            "src.players.b12705048.agents.flatmc",
-            "FlatMC",
+            "src.players.b12705048.agents.flatmc_dirichlet",
+            "FlatMCDirichlet",
             {
-                "time_limit": 0.1
+                "time_limit": 0.8
             },
             "P1"
         ],
         [
-            "src.players.b12705048.agents.flatmc_sh_softmax",
-            "FlatMCSHSoftmax",
+            "src.players.b12705048.agents.flatmc",
+            "FlatMC",
             {
-                "epsilon": 0.2,
-                "tau": 10.0,
-                "time_limit": 0.8
+                "time_limit": 0.1
             },
             "P2"
         ]
