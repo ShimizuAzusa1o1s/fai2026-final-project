@@ -3,13 +3,13 @@
     "server_port": 8888,
     "username": "ShimizuAzusa",
     "password": "LaoWang1015@@",
-    "label": "IzumikV1.0",
+    "label": "ExusiaiAlter",
     "player": {
-        "path": "src.players.b12705048.agents.flatmc_ucb1",
-        "class": "FlatMCUCB1",
+        "path": "src.players.b12705048.agents.flatmc_sh_sm",
+        "class": "FlatMCSHSoftmax",
         "args": {
-            "c_param": 10.0,
             "epsilon": 0.2,
+            "tau": 10.0,
             "time_limit": 0.8
         }
     }
