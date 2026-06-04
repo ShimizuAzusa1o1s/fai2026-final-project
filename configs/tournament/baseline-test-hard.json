@@ -15,12 +15,13 @@
     ],
     "players": [
         [
-            "src.players.b12705048.agents.flatmc_dirichlet",
-            "FlatMCDirichlet",
+            "src.players.b12705048.agents.flatmc_neural",
+            "FlatMCNeural",
             {
-                "time_limit": 0.8
-            },
-            "P1"
+                "time_limit": 0.8,
+                "epsilon": 0.2,
+                "tau": 5.0
+            }
         ],
         [
             "src.players.b12705048.agents.flatmc",
