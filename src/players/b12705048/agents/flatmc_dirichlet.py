@@ -46,16 +46,20 @@ class FlatMCDirichlet:
         W (np.ndarray): Utility weights for 1st, 2nd, 3rd, and 4th place finishes.
     """
 
-    def __init__(self, player_idx, time_limit=0.1):
+    def __init__(self, player_idx, epsilon=0.2, tau=10.0, time_limit=0.1):
         """
         Initialize the agent.
 
         Args:
             player_idx (int): The player's seat index in the game (0-3).
+            epsilon (float): Ratio of random rollouts (0.0 to 1.0) mixed into the min-max policy.
+            tau (float): Temperature parameter for the Softmax distribution.
             time_limit (float): Simulation budget in seconds.
         """
         self.player_idx = player_idx
         self.time_limit = time_limit
+        self.epsilon = epsilon
+        self.tau = tau
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
         self.bullhead_lookup = BULLHEAD_LOOKUP
@@ -102,6 +106,38 @@ class FlatMCDirichlet:
         orig_lengths = np.array([len(row) for row in board], dtype=np.int32)
         orig_rbulls = np.array([sum(self.bullhead_lookup[c] for c in row) for row in board], dtype=np.int32)
 
+        # ---- Phase 1.5: Compute Safety Scores S(c) ----
+        # Fully vectorized computation against initial board
+        deltas = np.arange(105)[:, None] - orig_tails[None, :]
+        valid_mask = deltas > 0
+        
+        masked_deltas = np.where(valid_mask, deltas, np.inf)
+        min_deltas = np.min(masked_deltas, axis=1)
+        target_rows = np.argmin(masked_deltas, axis=1)
+        
+        is_invalid = np.isinf(min_deltas)
+        
+        target_lengths = orig_lengths[target_rows]
+        target_rbulls = orig_rbulls[target_rows]
+        
+        S = np.zeros(105, dtype=np.float32)
+        
+        cond1 = (~is_invalid) & (target_lengths < 5)
+        S[cond1] = -min_deltas[cond1]
+        
+        cond2 = (~is_invalid) & (target_lengths == 5)
+        S[cond2] = -(10.0 * target_rbulls[cond2])
+        
+        S[is_invalid] = -100.0
+        
+        # Static Priors B(c)
+        B = np.zeros(105, dtype=np.float32)
+        B[1:11] = 2.0
+        B[95:105] = 2.0
+        
+        S += B
+        # -----------------------------------------------
+
         unseen_mask_base = np.zeros(105, dtype=bool)
         unseen_mask_base[unseen_cards] = True
         
@@ -146,10 +182,41 @@ class FlatMCDirichlet:
 
             opp_indices = [i for i in range(4) if i != self.player_idx]
 
+            # Vectorized Min/Max Rollout Generation for Opponents
+            opp_hands_unsorted = np.zeros((actual_batch_size, 3, n_turns), dtype=np.int32)
+            opp_hands_unsorted[:, 0, :] = perm[:, 0:n_turns]
+            opp_hands_unsorted[:, 1, :] = perm[:, n_turns:2*n_turns]
+            opp_hands_unsorted[:, 2, :] = perm[:, 2*n_turns:3*n_turns]
+            opp_hands = np.sort(opp_hands_unsorted, axis=2)
+
+            choices = np.random.randint(0, 2, size=(actual_batch_size, 3, n_turns), dtype=np.int32)
+            min_counts = np.cumsum(1 - choices, axis=2)
+            min_counts_shifted = np.concatenate([np.zeros((actual_batch_size, 3, 1), dtype=np.int32), min_counts[:, :, :-1]], axis=2)
+            max_counts = np.cumsum(choices, axis=2)
+            max_counts_shifted = np.concatenate([np.zeros((actual_batch_size, 3, 1), dtype=np.int32), max_counts[:, :, :-1]], axis=2)
+            
+            left_indices = min_counts_shifted
+            right_indices = (n_turns - 1) - max_counts_shifted
+            selected_indices = np.where(choices == 0, left_indices, right_indices)
+            chosen_opp_cards = np.take_along_axis(opp_hands, selected_indices, axis=2)
+
+            eps_mask_opp = np.random.rand(actual_batch_size, 3, 1) < self.epsilon
+            
+            # --- SOFTMAX EXPLORE (Gumbel-Max) ---
+            opp_scores = S[opp_hands_unsorted]
+            U_opp = np.random.uniform(1e-8, 1.0 - 1e-8, size=(actual_batch_size, 3, n_turns))
+            noisy_opp_scores = (opp_scores / self.tau) - np.log(-np.log(U_opp))
+            
+            sort_idx_opp = np.argsort(-noisy_opp_scores, axis=2)
+            softmax_opp_cards = np.take_along_axis(opp_hands_unsorted, sort_idx_opp, axis=2)
+            # ------------------------------------
+            
+            final_opp_cards = np.where(eps_mask_opp, softmax_opp_cards, chosen_opp_cards)
+
             hands_array = np.zeros((actual_batch_size, 4, n_turns), dtype=np.int32)
-            hands_array[:, opp_indices[0], :] = perm[:, 0:n_turns]
-            hands_array[:, opp_indices[1], :] = perm[:, n_turns:2*n_turns]
-            hands_array[:, opp_indices[2], :] = perm[:, 2*n_turns:3*n_turns]
+            hands_array[:, opp_indices[0], :] = final_opp_cards[:, 0, :]
+            hands_array[:, opp_indices[1], :] = final_opp_cards[:, 1, :]
+            hands_array[:, opp_indices[2], :] = final_opp_cards[:, 2, :]
 
             for c, start_b, end_b, count in assigned_candidates:
                 my_rest = [x for x in hand if x != c]
@@ -241,13 +308,26 @@ class FlatMCDirichlet:
         # ---- Final Selection ----
         best_card = None
         best_score = -1.0
+        
+        debug = False
+        if debug:
+            print(f"\n[Dirichlet Debug] Turn with {n_turns} cards in hand.")
+            print(f"Hand: {hand}")
+            print(f"Board tails: {[row[-1] for row in board]}")
+            
         for c in hand:
             expected_theta = alpha[c] / np.sum(alpha[c])
             expected_score = np.dot(expected_theta, self.W)
+            
+            if debug:
+                print(f"  Card {c:3d}: alpha={alpha[c]}, expected_theta={np.round(expected_theta, 3)}, score={expected_score:.3f}")
             
             # Simple tie-breaking by lowest raw candidate ID if equal
             if best_card is None or expected_score > best_score:
                 best_score = expected_score
                 best_card = c
+                
+        if debug:
+            print(f"  => Chose Card {best_card} with score {best_score:.3f}")
                 
         return best_card
