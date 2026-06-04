@@ -1,0 +1,16 @@
+{
+    "server_host": "ws6.csie.org",
+    "server_port": 8888,
+    "username": "ShimizuAzusa",
+    "password": "LaoWang1015@@",
+    "label": "ExusiaiAlter",
+    "player": {
+        "path": "src.players.b12705048.agents.flatmc_sh",
+        "class": "FlatMCSH",
+        "args": {
+            "epsilon": 0.2,
+            "tau": 10.0,
+            "time_limit": 0.8
+        }
+    }
+}

@@ -46,7 +46,7 @@ def generate_games(num_games=10, save_path="dataset.npz"):
     print(f"Generating {num_games} games using FlatMCSH self-play...")
     
     # Initialize 4 identical FlatMCSH players with the optimal config
-    players = [FlatMCSH(player_idx=i, time_limit=0.1, epsilon=0.2, tau=5.0) for i in range(4)]
+    players = [FlatMCSH(player_idx=i, time_limit=0.8, epsilon=0.2, tau=5.0) for i in range(4)]
     
     cfg = {
         "n_players": 4,
