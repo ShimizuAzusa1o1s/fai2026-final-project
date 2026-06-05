@@ -15,17 +15,15 @@
     ],
     "players": [
         [
-            "src.players.b12705048.agents.flatmc_neural",
-            "FlatMCNeural",
+            "src.players.b12705048.agents.flatmc",
+            "FlatMC",
             {
-                "time_limit": 0.8,
-                "epsilon": 0.2,
-                "tau": 5.0
+                "time_limit": 0.8
             }
         ],
         [
-            "src.players.b12705048.agents.flatmc",
-            "FlatMC",
+            "src.players.b12705048.agents.flatmc_baseline",
+            "FlatMCBaseline",
             {
                 "time_limit": 0.1
             },

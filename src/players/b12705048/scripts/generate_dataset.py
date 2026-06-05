@@ -4,11 +4,11 @@ import numpy as np
 from tqdm import tqdm
 
 # Add project root to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from src.engine import Engine
-from src.players.b12705048.agents.flatmc_sh import FlatMCSH
-from src.models.feature_extractor import (
+from src.players.b12705048.agents.flatmc import FlatMC
+from src.players.b12705048.models.feature_extractor import (
     build_feature_vector,
     build_target_matrix,
     get_gap_capacities,
@@ -45,8 +45,8 @@ def get_unseen_cards_at_round(total_cards, board, hand, history_matrix, target_r
 def generate_games(num_games=10, save_path="dataset.npz"):
     print(f"Generating {num_games} games using FlatMCSH self-play...")
     
-    # Initialize 4 identical FlatMCSH players with the optimal config
-    players = [FlatMCSH(player_idx=i, time_limit=0.8, epsilon=0.2, tau=5.0) for i in range(4)]
+    # Initialize 4 identical FlatMC players with the optimal config
+    players = [FlatMC(player_idx=i, time_limit=0.8) for i in range(4)]
     
     cfg = {
         "n_players": 4,
