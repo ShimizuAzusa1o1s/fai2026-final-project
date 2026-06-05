@@ -15,8 +15,8 @@
     ],
     "players": [
         [
-            "src.players.b12705048.agents.flatmc",
-            "FlatMC",
+            "src.players.b12705048.agents.flatmc_hybrid",
+            "FlatMCHybrid",
             {
                 "time_limit": 0.8
             }
@@ -26,8 +26,7 @@
             "FlatMCBaseline",
             {
                 "time_limit": 0.1
-            },
-            "P2"
+            }
         ]
     ],
     "engine": {
