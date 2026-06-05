@@ -3,13 +3,11 @@
     "server_port": 8888,
     "username": "ShimizuAzusa",
     "password": "LaoWang1015@@",
-    "label": "ArturiaAlter",
+    "label": "WaterSpirit",
     "player": {
-        "path": "src.players.b12705048.agents.flatmc_dirichlet",
-        "class": "FlatMCDirichlet",
+        "path": "src.players.b12705048.agents.flatmc_kingmaker",
+        "class": "FlatMCKingmaker",
         "args": {
-            "epsilon": 0.2,
-            "tau": 10.0,
             "time_limit": 0.8
         }
     }

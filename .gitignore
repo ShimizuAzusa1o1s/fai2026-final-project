@@ -5,4 +5,5 @@ results
 .*
 
 # RL Agent Models: Ignore intermediate checkpoints but track final stage models
-*_steps.zip
+ppo_*.pt
+!ppo_final.pt
