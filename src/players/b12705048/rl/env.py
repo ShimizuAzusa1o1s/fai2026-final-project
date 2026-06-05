@@ -85,6 +85,28 @@ def make_opponents(opponent_type: str = "flatmc_baseline",
             Maximizer(player_idx=3),
         ]
 
+    if opponent_type == "pool":
+        import random
+        from src.players.b12705048.agents.flatmc_baseline import FlatMCBaseline
+        from src.players.TA.public_baselines2 import Baseline9, Baseline10
+        from src.players.b12705048.agents.greedy import Minimizer, Maximizer
+        
+        pool_choices = ["minimizer", "maximizer", "baseline9", "baseline10", "flatmc_baseline"]
+        opponents = []
+        for i in range(1, 4):
+            choice = random.choice(pool_choices)
+            if choice == "minimizer":
+                opponents.append(Minimizer(player_idx=i))
+            elif choice == "maximizer":
+                opponents.append(Maximizer(player_idx=i))
+            elif choice == "baseline9":
+                opponents.append(Baseline9(player_idx=i))
+            elif choice == "baseline10":
+                opponents.append(Baseline10(player_idx=i))
+            else:
+                opponents.append(FlatMCBaseline(player_idx=i, time_limit=time_limit))
+        return opponents
+
     raise ValueError(f"Unknown opponent type: {opponent_type!r}")
 
 

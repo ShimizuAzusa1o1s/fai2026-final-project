@@ -64,7 +64,7 @@ def parse_args() -> argparse.Namespace:
 
     # Opponents
     p.add_argument("--opponent-type", type=str, default="flatmc_baseline",
-                    choices=["flatmc_baseline", "baseline10", "minimizer", "mixed"])
+                    choices=["flatmc_baseline", "baseline10", "minimizer", "mixed", "pool"])
     p.add_argument("--opponent-time-limit", type=float, default=0.05,
                     help="Per-action budget for FlatMCBaseline opponents")
 
@@ -78,6 +78,8 @@ def parse_args() -> argparse.Namespace:
                     help="Save checkpoint every N updates")
     p.add_argument("--run-name", type=str, default=None,
                     help="Name for TensorBoard run (auto-generated if omitted)")
+    p.add_argument("--load-checkpoint", type=str, default="",
+                    help="Path to an existing .pt checkpoint to load weights from")
     p.add_argument("--no-tensorboard", action="store_true",
                     help="Disable TensorBoard logging")
 
@@ -184,6 +186,7 @@ def main():
         checkpoint_dir=checkpoint_dir,
         checkpoint_every=args.checkpoint_every,
         log_dir=log_dir,
+        load_checkpoint=args.load_checkpoint,
         seed=args.seed,
     )
 

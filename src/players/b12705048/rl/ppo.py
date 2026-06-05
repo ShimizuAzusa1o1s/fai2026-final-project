@@ -58,6 +58,7 @@ class PPOTrainer:
         checkpoint_dir: str = "",
         checkpoint_every: int = 100,
         log_dir: str = "",
+        load_checkpoint: str = "",
         seed: int = 42,
     ):
         self.envs = envs
@@ -88,6 +89,13 @@ class PPOTrainer:
 
         # Network & optimizer
         self.agent = ActorCritic().to(self.device)
+        
+        # Load weights for curriculum learning
+        if load_checkpoint:
+            print(f"[PPO] Loading checkpoint from: {load_checkpoint}")
+            state_dict = torch.load(load_checkpoint, map_location=self.device)
+            self.agent.load_state_dict(state_dict)
+            
         self.optimizer = optim.Adam(self.agent.parameters(), lr=self.lr, eps=1e-5)
 
         # TensorBoard writer (lazy init)
