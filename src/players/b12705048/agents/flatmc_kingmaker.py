@@ -41,7 +41,7 @@ from src.players.b12705048.models.feature_extractor import (
     assign_card_to_bucket
 )
 
-class FlatMC:
+class FlatMCKingmaker:
     """
     Vectorized 1-ply Monte Carlo agent using Successive Halving for budget allocation
     and a Neural Network for opponent hand determinization.
@@ -56,16 +56,20 @@ class FlatMC:
         model (TopologicalOpponentNet): The loaded PyTorch determinization network.
     """
 
-    def __init__(self, player_idx, time_limit=0.8):
+    def __init__(self, player_idx, time_limit=0.8, lam=1.5, tau=10.0):
         """
         Initialize the Neural Determinization Monte Carlo player.
 
         Args:
             player_idx (int): The player's seat index in the game (0-3).
             time_limit (float): Simulation budget in seconds.
+            lam (float): Self-preservation coefficient (default: 1.5).
+            tau (float): Temperature for scoreboard targeting (default: 10.0).
         """
         self.player_idx = player_idx
         self.time_limit = time_limit
+        self.lam = lam
+        self.tau = tau
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
         self.bullhead_lookup = BULLHEAD_LOOKUP
@@ -104,17 +108,31 @@ class FlatMC:
                 for row in history['board_history'][0]:
                     visible_cards.update(row)
 
+        # ---- Phase 2: Scoreboard Attack Initialization ----
+        if isinstance(history, dict) and 'score_history' in history and len(history['score_history']) > 0:
+            current_scores = history['score_history'][-1]
+        else:
+            current_scores = [0, 0, 0, 0]
+
+        opp_indices = [i for i in range(4) if i != self.player_idx]
+        opp_scores = np.array([current_scores[i] for i in opp_indices], dtype=np.float32)
+        
+        # W_i = exp(-S_i / tau) / sum(exp(-S_j / tau))
+        opp_weights_unnormalized = np.exp(-opp_scores / self.tau)
+        self.opp_weights = opp_weights_unnormalized / np.sum(opp_weights_unnormalized)
+
         unseen_cards = list(self.total_cards - visible_cards - set(hand))
         n_turns = len(hand)
 
-        stats_penalty = {c: 0.0 for c in hand}
+        stats_self_penalty = {c: 0.0 for c in hand}
+        stats_opp_penalty = {c: 0.0 for c in hand}
         stats_visits = {c: 0 for c in hand}
 
         orig_tails = np.array([row[-1] for row in board], dtype=np.int32)
         orig_lengths = np.array([len(row) for row in board], dtype=np.int32)
         orig_rbulls = np.array([sum(self.bullhead_lookup[c] for c in row) for row in board], dtype=np.int32)
 
-        # ---- Phase 2: Neural Determinization Setup ----
+        # ---- Phase 3: Neural Determinization Setup ----
         if isinstance(history, dict) and 'score_history' in history:
             X = build_feature_vector(history, target_round, self.player_idx, unseen_cards, len(hand))
             sorted_row_ends = get_topological_gaps(board)
@@ -153,13 +171,11 @@ class FlatMC:
                 if actual_batch_size == 0: 
                     break
 
-                # ---- Phase 3: Batch Initialization & Deal ----
+                # ---- Phase 4: Batch Initialization & Deal ----
                 tails = np.tile(orig_tails, (actual_batch_size, 1))
                 lengths = np.tile(orig_lengths, (actual_batch_size, 1))
                 rbulls = np.tile(orig_rbulls, (actual_batch_size, 1))
                 penalties = np.zeros((actual_batch_size, 4), dtype=np.int32)
-
-                opp_indices = [i for i in range(4) if i != self.player_idx]
 
                 # Neural Determinization: Sequential Gumbel-Max Sampling without replacement
                 opp_hands_unsorted = np.zeros((actual_batch_size, 3, n_turns), dtype=np.int32)
@@ -212,7 +228,7 @@ class FlatMC:
                         
                         hands_array[start_b:end_b, self.player_idx, 1:] = chosen_my
 
-                # ---- Phase 4: SIMD Batch Simulation Loop ----
+                # ---- Phase 5: SIMD Batch Simulation Loop ----
                 for t in range(n_turns):
                     played_cards = hands_array[:, :, t]
 
@@ -258,7 +274,7 @@ class FlatMC:
                             tails[b_nc, target_rows[nc]] = current_cards[nc]
                             rbulls[b_nc, target_rows[nc]] += card_bulls[nc]
 
-                # ---- Phase 5: Stat Aggregation ----
+                # ---- Phase 6: Stat Aggregation ----
                 current_start = 0
                 for c in candidates:
                     sims_per_cand = budget[c]
@@ -270,14 +286,27 @@ class FlatMC:
                         continue
                         
                     my_pens = penalties[start_b:end_b, self.player_idx]
-                    stats_penalty[c] += np.sum(my_pens)
+                    
+                    # Weighted opponent penalties
+                    opp_pens = np.zeros(sims_per_cand, dtype=np.float32)
+                    for idx, opp in enumerate(opp_indices):
+                        opp_pens += self.opp_weights[idx] * penalties[start_b:end_b, opp]
+                        
+                    stats_self_penalty[c] += np.sum(my_pens)
+                    stats_opp_penalty[c] += np.sum(opp_pens)
                     stats_visits[c] += sims_per_cand
+
+            def get_loss(c):
+                v = max(1, stats_visits.get(c, 0))
+                mean_self = stats_self_penalty.get(c, 0.0) / v
+                mean_opp = stats_opp_penalty.get(c, 0.0) / v
+                return self.lam * mean_self - mean_opp
 
             # Successive Halving: drop the worst half
             if len(candidates) > 1:
-                candidates.sort(key=lambda c: stats_penalty[c] / max(1, stats_visits[c]))
+                candidates.sort(key=get_loss)
                 keep = math.ceil(len(candidates) / 2)
                 candidates = candidates[:keep]
 
-        best_card = min(hand, key=lambda k: stats_penalty.get(k, 0.0) / max(1, stats_visits.get(k, 0)))
+        best_card = min(hand, key=get_loss)
         return best_card
