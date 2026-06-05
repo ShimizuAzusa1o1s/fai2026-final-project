@@ -49,8 +49,6 @@ class FlatMC:
     Attributes:
         player_idx (int): This agent's seat index (0-3).
         time_limit (float): Simulation budget in seconds.
-        epsilon (float): Ratio of random rollouts (0.0 to 1.0) mixed into min-max policy.
-        tau (float): Temperature parameter for the Softmax rollout distribution.
         total_cards (set[int]): The full card universe {1, ..., 104}.
         batch_size (int): Number of parallel simulations per batch.
         bullhead_lookup (np.ndarray): O(1) bullhead penalty lookup array.
@@ -58,20 +56,16 @@ class FlatMC:
         model (TopologicalOpponentNet): The loaded PyTorch determinization network.
     """
 
-    def __init__(self, player_idx, epsilon=0.2, tau=5.0, time_limit=0.8):
+    def __init__(self, player_idx, time_limit=0.8):
         """
         Initialize the Neural Determinization Monte Carlo player.
 
         Args:
             player_idx (int): The player's seat index in the game (0-3).
-            epsilon (float): Ratio of random rollouts (0.0 to 1.0) mixed into the min-max policy.
-            tau (float): Temperature parameter for the Softmax distribution.
             time_limit (float): Simulation budget in seconds.
         """
         self.player_idx = player_idx
         self.time_limit = time_limit
-        self.epsilon = epsilon
-        self.tau = tau
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
         self.bullhead_lookup = BULLHEAD_LOOKUP
