@@ -123,7 +123,7 @@ class FlatMC:
             with torch.no_grad():
                 x_t = torch.tensor(X, dtype=torch.float32).unsqueeze(0).to(self.device)
                 c_t = torch.tensor(capacities, dtype=torch.float32).unsqueeze(0).to(self.device)
-            # Epsilon-Greedy Determinization: Mix NN probabilities with uniform distribution
+                nn_probs = self.model(x_t, gap_capacities=c_t).squeeze(0).cpu().numpy() # Shape (3, 5)
             # Note: We reverted back from Dynamic Entropy Epsilon to fixed 0.2 because the fixed
             # value proved to be far more robust against neural network overconfidence in tournaments.
             epsilon = 0.2
