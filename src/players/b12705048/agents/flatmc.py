@@ -123,7 +123,12 @@ class FlatMC:
             with torch.no_grad():
                 x_t = torch.tensor(X, dtype=torch.float32).unsqueeze(0).to(self.device)
                 c_t = torch.tensor(capacities, dtype=torch.float32).unsqueeze(0).to(self.device)
-                probs = self.model(x_t, gap_capacities=c_t).squeeze(0).numpy() # Shape (3, 5)
+            # Epsilon-Greedy Determinization: Mix NN probabilities with uniform distribution
+            # Note: We reverted back from Dynamic Entropy Epsilon to fixed 0.2 because the fixed
+            # value proved to be far more robust against neural network overconfidence in tournaments.
+            epsilon = 0.2
+            uniform_probs = np.full((3, 5), 0.2)
+            probs = (1 - epsilon) * nn_probs + epsilon * uniform_probs
         else:
             # Fallback to uniform probabilities if history doesn't contain required keys
             probs = np.full((3, 5), 0.2)
@@ -180,8 +185,17 @@ class FlatMC:
                 
                 opp_hands = np.sort(opp_hands_unsorted, axis=2)
 
-                # Pure Random Rollout simulation
-                rand_idx_opp = np.argsort(np.random.rand(actual_batch_size, 3, n_turns), axis=2)
+                # Biased Turn-Ordering Rollout simulation (No PyTorch Overhead)
+                # Opponents prioritize playing the cards the NN is most confident they hold.
+                opp_weights = np.zeros((actual_batch_size, 3, n_turns), dtype=np.float32)
+                for opp in range(3):
+                    opp_weights[:, opp, :] = card_log_weights[opp, opp_hands[:, opp, :]]
+                
+                U_order = np.random.uniform(1e-8, 1.0 - 1e-8, size=(actual_batch_size, 3, n_turns))
+                noisy_order_weights = opp_weights - np.log(-np.log(U_order))
+                
+                # Argsort descending (-noisy_order_weights) so highest confidence cards are played earlier
+                rand_idx_opp = np.argsort(-noisy_order_weights, axis=2)
                 chosen_opp_cards = np.take_along_axis(opp_hands, rand_idx_opp, axis=2)
 
                 hands_array = np.zeros((actual_batch_size, 4, n_turns), dtype=np.int32)
