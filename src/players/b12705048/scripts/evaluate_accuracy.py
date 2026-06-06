@@ -6,8 +6,11 @@ import torch
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
 from src.players.b12705048.models.opponent_model import TopologicalOpponentNet, compute_kl_loss
 
-def evaluate_model():
-    dataset_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "large_dataset.npz")
+def evaluate_model(dataset_filename="large_dataset.npz"):
+    dataset_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", dataset_filename)
+    # Fallback to local execution directory if not found in data/
+    if not os.path.exists(dataset_path):
+        dataset_path = dataset_filename
     model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "topological_net.pth")
     
     if not os.path.exists(dataset_path):
@@ -86,4 +89,9 @@ def evaluate_model():
     print("-" * 40)
 
 if __name__ == "__main__":
-    evaluate_model()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data", type=str, default="large_dataset.npz")
+    args = parser.parse_args()
+    
+    evaluate_model(args.data)

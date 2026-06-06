@@ -15,6 +15,11 @@ from src.players.b12705048.models.feature_extractor import (
     get_topological_gaps
 )
 
+# Import other agents for chaos training
+from src.players.b12705048.agents.flatmc_baseline import FlatMCBaseline
+from src.players.b12705048.agents.greedy import Maximizer
+from src.players.TA.public_baselines2 import Baseline10
+
 def get_player_hand_at_round(history_matrix, target_round, player_idx):
     """
     Since each player plays exactly 1 card per round, their hand at `target_round`
@@ -43,10 +48,18 @@ def get_unseen_cards_at_round(total_cards, board, hand, history_matrix, target_r
     return list(total_cards - visible)
 
 def generate_games(num_games=10, save_path="dataset.npz"):
-    print(f"Generating {num_games} games using FlatMCSH self-play...")
+    print(f"Generating {num_games} games using mixed-opponent (chaos) self-play...")
     
-    # Initialize 4 identical FlatMC players with the optimal config
-    players = [FlatMC(player_idx=i, time_limit=0.8) for i in range(4)]
+    # Initialize pools of different players to mix and match per game
+    print("Initializing player pools...")
+    flatmc_pool = [FlatMC(player_idx=i, time_limit=0.8) for i in range(4)]
+    baseline_pool = [FlatMCBaseline(player_idx=i, time_limit=0.1) for i in range(4)]
+    maximizer_pool = [Maximizer(player_idx=i) for i in range(4)]
+    
+    # Suppress output during Baseline10 init to avoid spam
+    from src.engine import silenced_if
+    with silenced_if(True):
+        b10_pool = [Baseline10(player_idx=i) for i in range(4)]
     
     cfg = {
         "n_players": 4,
@@ -62,6 +75,19 @@ def generate_games(num_games=10, save_path="dataset.npz"):
     total_cards = set(range(1, 105))
     
     for game_id in tqdm(range(num_games)):
+        # Randomly select a player from the pools for each seat
+        players = []
+        for i in range(4):
+            r = np.random.rand()
+            if r < 0.4:
+                players.append(flatmc_pool[i])
+            elif r < 0.6:
+                players.append(baseline_pool[i])
+            elif r < 0.8:
+                players.append(maximizer_pool[i])
+            else:
+                players.append(b10_pool[i])
+                
         engine = Engine(cfg, players)
         # Note: the engine automatically resets and plays
         scores, history = engine.play_game()

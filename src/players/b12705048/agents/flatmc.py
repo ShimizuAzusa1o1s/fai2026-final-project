@@ -12,8 +12,8 @@ mathematically grounded subsystems:
 
     2. **Calibrated Safety-Score Rollout** — Instead of ad-hoc heuristic
        scores, each card's safety S(c) is computed as the negative expected
-       penalty in bullheads, derived from a combinatorial model of how many
-       opponent cards can interpose in the gap between a row tail and c.
+       penalty in bullheads, derived from an exact NN-weighted Poisson-Binomial
+       model of gap invasions, and an exact shifted-utility model for undercuts.
 
     3. **Successive Halving** — The simulation budget is divided into
        ceil(log2(|hand|)) stages. After each stage, the worst-performing
@@ -28,8 +28,8 @@ Algorithm:
     4. Compute calibrated S(c) for all 104 cards (expected penalty model).
     5. Successive Halving loop:
        a. Gumbel-Max sample opponent hands from neural weights.
-       b. Softmax(S/τ) rollout policy determines play order for all players
-          (with 20% uniform exploration mixed in per-turn).
+       b. Immediate-round Softmax(S/τ) determines turn-0 play for all
+          players; future turns use uniform-random permutation.
        c. Exact 6 Nimmt! simulation via vectorized SIMD batch engine.
        d. Aggregate penalties; after each stage, halve the candidate set.
     6. Return the card with the lowest average simulated penalty.
@@ -271,16 +271,17 @@ class FlatMC:
         #
         # Three cases:
         #   Case 1 (safe placement): c fits into a row without filling it.
-        #       Risk depends on how many opponent cards can interpose in
-        #       the gap (delta) between the row tail and c. We model this
-        #       combinatorially: with 3 opponents and n unseen cards, the
-        #       probability of k interposing cards follows a binomial.
+        #       Risk depends on opponents interposing cards in the gap. We compute
+        #       this exactly using the NN bucket probabilities via a Poisson-Binomial
+        #       distribution to find the probability of the row filling.
         #
         #   Case 2 (row-filling): c would be the 6th card → deterministic
         #       penalty equal to the row's total bullheads.
         #
-        #   Case 3 (undercut): c < all row tails → forced to take the
-        #       cheapest row. Penalty = that row's bullhead total.
+        #   Case 3 (undercut): c < all row tails → forced to take the cheapest row.
+        #       We compute the exact Shifted Utility: the probability an opponent
+        #       also undercuts (causing a board reset) and the conditional probability
+        #       that our card c survives the shift.
         # ================================================================
 
         # Compute delta (gap) from each card to each row tail
@@ -303,45 +304,42 @@ class FlatMC:
 
         S = np.zeros(105, dtype=np.float32)
 
+        # ---- Precompute NN probabilities for exact safety evaluations ----
+        W = np.exp(card_log_weights)  # Shape (3, 105)
+        W_cumsum = np.zeros((3, 106), dtype=np.float32)
+        W_cumsum[:, 1:] = np.cumsum(W, axis=1)
+
         # ---- Case 1: Safe placement (row not yet full) ----
         # The risk is that opponents interpose cards in the gap, potentially
-        # pushing the row to 5 cards before our card resolves. We compute:
-        #
-        #   p_gap = (delta - 1) / n_unseen   (fraction of unseen cards in gap)
-        #   slots_needed = 5 - current_length (how many more cards fill row)
-        #
-        # Expected interposition penalty (simplified binomial model):
-        #   E[penalty] ≈ Σ_{k=slots_needed}^{3} C(3,k) p^k (1-p)^{3-k} · rbulls
-        #
-        # For the safety score, we use: S(c) = -E[penalty from interposition]
+        # pushing the row to 5 cards before our card resolves. We compute
+        # exactly the probability that opponents invade using the NN predictions.
         cond_safe = (~is_invalid) & (target_lengths < 5)
         if np.any(cond_safe):
-            safe_deltas = min_deltas[cond_safe]
+            safe_cards = np.where(cond_safe)[0]
+            safe_tails = orig_tails[target_rows[cond_safe]]
             safe_lengths = target_lengths[cond_safe]
             safe_rbulls = target_rbulls[cond_safe]
+            safe_deltas = min_deltas[cond_safe]
 
-            # Probability that any single unseen card falls in the gap
-            p_gap = np.clip((safe_deltas - 1) / max(1, n_unseen), 0.0, 1.0)
-
-            # Number of additional cards needed to trigger a penalty
-            # (row is full at length 5; penalty triggers on the 6th card)
-            slots_remaining = 5 - safe_lengths  # How many more fill the row
-
-            # Probability that >= slots_remaining opponents play in the gap
-            # Using complementary binomial CDF with n=3 opponents:
-            #   P(X >= k) = 1 - Σ_{j=0}^{k-1} C(3,j) p^j (1-p)^{3-j}
-            p_fill = np.zeros_like(p_gap)
-            for k_opp in range(4):  # k_opp = 0, 1, 2, 3
-                binom_coeff = math.comb(3, k_opp)
-                p_exactly_k = (binom_coeff
-                               * (p_gap ** k_opp)
-                               * ((1 - p_gap) ** (3 - k_opp)))
-                # Accumulate P(X >= slots_remaining)
-                p_fill += np.where(k_opp >= slots_remaining, p_exactly_k, 0.0)
+            # p_opp[opp, i] = P(opp plays card in gap [tail+1, c-1])
+            p_opp = W_cumsum[:, safe_cards] - W_cumsum[:, safe_tails + 1]
+            p_opp = np.clip(p_opp, 0.0, 1.0)
+            
+            p0, p1, p2 = p_opp[0], p_opp[1], p_opp[2]
+            slots_needed = 5 - safe_lengths
+            
+            # Poisson-Binomial probabilities for 1, 2, or 3 invaders
+            P_1 = 1.0 - (1.0 - p0) * (1.0 - p1) * (1.0 - p2)
+            P_2 = p0*p1*(1.0 - p2) + p0*p2*(1.0 - p1) + p1*p2*(1.0 - p0) + p0*p1*p2
+            P_3 = p0*p1*p2
+            
+            p_fill = np.zeros_like(p0)
+            p_fill = np.where(slots_needed <= 1, P_1, p_fill)
+            p_fill = np.where(slots_needed == 2, P_2, p_fill)
+            p_fill = np.where(slots_needed >= 3, P_3, p_fill)
 
             # Expected penalty = P(row fills) × row bullhead score
-            # Plus a small gap-distance penalty for sorting tiebreaking:
-            #   cards closer to the tail are inherently safer
+            # Plus a small gap-distance penalty for sorting tiebreaking.
             S[cond_safe] = -(p_fill * safe_rbulls + 0.01 * safe_deltas)
 
         # ---- Case 2: Row-filling placement (row already has 5 cards) ----
@@ -352,10 +350,33 @@ class FlatMC:
 
         # ---- Case 3: Undercut (card lower than all row tails) ----
         # Must take the cheapest row. Penalty = min row score.
-        # Use the actual minimum row bullhead total as the penalty.
         if np.any(is_invalid):
-            min_row_penalty = float(np.min(orig_rbulls))
-            S[is_invalid] = -min_row_penalty
+            invalid_cards = np.where(is_invalid)[0]
+            sorted_rbulls = np.sort(orig_rbulls)
+            min_row_1 = float(sorted_rbulls[0])
+            min_row_2 = float(sorted_rbulls[1]) if len(sorted_rbulls) > 1 else min_row_1
+            
+            min_tail = int(np.min(orig_tails))
+            
+            # P_undercut for each opponent (probability they play < min_tail)
+            p_u = np.clip(W_cumsum[:, min_tail] - W_cumsum[:, 1], 0.0, 1.0)
+            p_shift = 1.0 - (1.0 - p_u[0]) * (1.0 - p_u[1]) * (1.0 - p_u[2])
+            
+            # If a shift occurs, what is the probability our card 'c' is safe?
+            # It's safe if the opponent's undercut 'U' is < c.
+            W_sum = np.sum(W, axis=0)
+            W_sum_cumsum = np.cumsum(W_sum)
+            denom = W_sum_cumsum[min_tail - 1]
+            
+            if denom > 1e-9:
+                # invalid_cards are >= 1, so invalid_cards - 1 is >= 0
+                P_safe = W_sum_cumsum[invalid_cards - 1] / denom
+            else:
+                P_safe = np.zeros_like(invalid_cards, dtype=np.float32)
+                
+            shifted_utility = -(1.0 - P_safe) * min_row_2
+            
+            S[is_invalid] = (1.0 - p_shift) * (-min_row_1) + p_shift * shifted_utility
 
         # ================================================================
         # PHASE 4: SUCCESSIVE HALVING + MONTE CARLO SIMULATION
@@ -427,55 +448,29 @@ class FlatMC:
                         available_mask, chosen_cards, False, axis=1
                     )
 
-                # ---- Phase 4c: Softmax-Safety Rollout Policy ----
+                # ---- Phase 4c: Opponent Play-Order (Softmax Policy) ----
                 # Determine the play order for each opponent's hand using
-                # Softmax(S/τ) via the Gumbel trick (same math as 4b).
-                #
-                # Policy mixture (per-turn, not per-simulation):
-                #   - With probability (1 - exploration_ratio): use
-                #     Softmax(S/τ) — plays safer cards first.
-                #   - With probability exploration_ratio: use uniform
-                #     random permutation — pure exploration.
-                #
-                # This replaces the old MinMax policy which was unsound
-                # (see analysis.md H5). The Softmax policy is a proper
-                # probability distribution over all hand cards, not just
-                # the extremes (min/max).
-
-                # Compute Softmax-ordered play sequence for opponents
-                opp_scores = S[opp_hands_unsorted]  # (batch, 3, n_turns)
-                U_opp = np.random.uniform(
-                    1e-8, 1.0 - 1e-8,
-                    size=(actual_batch_size, 3, n_turns)
-                )
-                # Gumbel-Softmax: add Gumbel noise to S/τ scores
-                noisy_opp_scores = (
-                    (opp_scores / self.tau) - np.log(-np.log(U_opp))
-                )
-                sort_idx_opp = np.argsort(-noisy_opp_scores, axis=2)
-                softmax_opp_cards = np.take_along_axis(
-                    opp_hands_unsorted, sort_idx_opp, axis=2
-                )
-
-                # Generate uniform-random permutations for exploration
-                U_uniform = np.random.rand(
-                    actual_batch_size, 3, n_turns
-                )
+                # Softmax(S/τ). To prevent permutation duplication bugs,
+                # we mix the exploration policy per-simulation, not per-turn.
+                
+                # 1. Uniformly shuffle the entire hand (Pure Exploration)
+                U_uniform = np.random.rand(actual_batch_size, 3, n_turns)
                 uniform_perm = np.argsort(U_uniform, axis=2)
-                uniform_opp_cards = np.take_along_axis(
-                    opp_hands_unsorted, uniform_perm, axis=2
-                )
+                uniform_opp_cards = np.take_along_axis(opp_hands_unsorted, uniform_perm, axis=2)
 
-                # Per-turn exploration mask: independently decide each
-                # turn whether to explore (uniform) or exploit (Softmax)
-                eps_mask_opp = (
-                    np.random.rand(actual_batch_size, 3, n_turns)
-                    < self.exploration_ratio
-                )
+                # 2. Softmax-ordered sequence (Exploitation)
+                opp_scores = S[opp_hands_unsorted]  # (batch, 3, n_turns)
+                U_opp = np.random.uniform(1e-8, 1.0 - 1e-8, size=(actual_batch_size, 3, n_turns))
+                noisy_opp_scores = (opp_scores / self.tau) - np.log(-np.log(U_opp))
+                sort_idx_opp = np.argsort(-noisy_opp_scores, axis=2)
+                softmax_opp_cards = np.take_along_axis(opp_hands_unsorted, sort_idx_opp, axis=2)
 
-                final_opp_cards = np.where(
-                    eps_mask_opp, uniform_opp_cards, softmax_opp_cards
-                )
+                # 3. Per-simulation exploration mask
+                # If True, this specific opponent plays completely randomly for the whole simulation.
+                # If False, they play their cards ordered by Softmax safety.
+                # Broadcasting (batch, 3, 1) guarantees we don't mix elements across permutations!
+                eps_mask = np.random.rand(actual_batch_size, 3, 1) < self.exploration_ratio
+                final_opp_cards = np.where(eps_mask, uniform_opp_cards, softmax_opp_cards)
 
                 # Assemble the full hands_array for all 4 players
                 hands_array = np.zeros(
@@ -488,7 +483,7 @@ class FlatMC:
                 # ---- Phase 4d: Assign Our Candidate Cards ----
                 # For each candidate c, a slice of the batch is dedicated
                 # to simulations where we play c on turn 0, then play our
-                # remaining cards using the same Softmax(S/τ) policy.
+                # remaining cards using the same per-simulation Softmax/Uniform policy.
                 current_start = 0
                 for c in candidates:
                     sims_per_cand = budget[c]
@@ -509,7 +504,7 @@ class FlatMC:
                             my_rest_arr, (sims_per_cand, 1)
                         )
 
-                        # Softmax(S/τ) rollout for our remaining cards
+                        # Softmax-ordered sequence (Exploitation)
                         my_scores = S[my_hands_tile]  # (sims, n_rem)
                         U_my = np.random.uniform(
                             1e-8, 1.0 - 1e-8,
@@ -523,21 +518,16 @@ class FlatMC:
                             my_hands_tile, my_perm, axis=1
                         )
 
-                        # Uniform-random permutation for exploration
+                        # Uniform-random sequence (Exploration)
                         U_my_unif = np.random.rand(sims_per_cand, n_rem)
                         unif_perm_my = np.argsort(U_my_unif, axis=1)
                         uniform_my = np.take_along_axis(
                             my_hands_tile, unif_perm_my, axis=1
                         )
-
-                        # Per-turn exploration mask (same ratio)
-                        eps_mask_my = (
-                            np.random.rand(sims_per_cand, n_rem)
-                            < self.exploration_ratio
-                        )
-                        final_my = np.where(
-                            eps_mask_my, uniform_my, softmax_my
-                        )
+                        
+                        # Per-simulation exploration mask (broadcast over n_rem)
+                        eps_mask_my = np.random.rand(sims_per_cand, 1) < self.exploration_ratio
+                        final_my = np.where(eps_mask_my, uniform_my, softmax_my)
 
                         hands_array[
                             start_b:end_b, self.player_idx, 1:
