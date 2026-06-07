@@ -51,8 +51,8 @@ import torch
 import os
 
 from src.players.b12705048.core.constants import BULLHEAD_LOOKUP
-from src.players.b12705048.models.opponent_model import TopologicalOpponentNet
-from src.players.b12705048.models.feature_extractor import (
+from src.players.b12705048.models.opp_net.model import TopologicalOpponentNet
+from src.players.b12705048.models.opp_net.feature_extractor import (
     build_feature_vector,
     get_gap_capacities,
     get_topological_gaps,
@@ -106,7 +106,7 @@ class FlatMC:
         self.time_limit = time_limit
         self.exploration_ratio = exploration_ratio
         self.tau = tau
-        self.debug = False
+        self.debug = True
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
         self.bullhead_lookup = BULLHEAD_LOOKUP
@@ -118,7 +118,7 @@ class FlatMC:
         # Resolve path to weights (agents/ → models/)
         current_dir = os.path.dirname(os.path.abspath(__file__))
         parent_dir = os.path.dirname(current_dir)
-        model_path = os.path.join(parent_dir, "models", "topological_net.pth")
+        model_path = os.path.join(parent_dir, "models", "opp_net", "weights.pth")
 
         if os.path.exists(model_path):
             self.model.load_state_dict(

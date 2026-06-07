@@ -4,14 +4,14 @@ import numpy as np
 import torch
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
-from src.players.b12705048.models.opponent_model import TopologicalOpponentNet, compute_kl_loss
+from src.players.b12705048.models.opp_net.model import TopologicalOpponentNet, compute_kl_loss
 
 def evaluate_model(dataset_filename="large_dataset.npz"):
-    dataset_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", dataset_filename)
+    dataset_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", dataset_filename)
     # Fallback to local execution directory if not found in data/
     if not os.path.exists(dataset_path):
         dataset_path = dataset_filename
-    model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "topological_net.pth")
+    model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "models", "opp_net", "weights.pth")
     
     if not os.path.exists(dataset_path):
         print(f"Error: Dataset {dataset_path} not found.")

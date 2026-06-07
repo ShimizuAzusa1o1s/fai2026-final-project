@@ -83,8 +83,8 @@ except Exception as e:
 
 
 from src.players.b12705048.core.constants import BULLHEAD_LOOKUP
-from src.players.b12705048.models.opponent_model import TopologicalOpponentNet
-from src.players.b12705048.models.feature_extractor import (
+from src.players.b12705048.models.opp_net.model import TopologicalOpponentNet
+from src.players.b12705048.models.opp_net.feature_extractor import (
     build_feature_vector,
     get_gap_capacities,
     get_topological_gaps,
@@ -162,7 +162,7 @@ class FlatMCCPP:
         # Resolve path to weights (agents/ → models/)
         current_dir = os.path.dirname(os.path.abspath(__file__))
         parent_dir = os.path.dirname(current_dir)
-        model_path = os.path.join(parent_dir, "models", "topological_net.pth")
+        model_path = os.path.join(parent_dir, "models", "opp_net", "weights.pth")
 
         if os.path.exists(model_path):
             self.model.load_state_dict(

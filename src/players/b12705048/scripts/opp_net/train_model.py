@@ -6,7 +6,7 @@ import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader, random_split
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-from src.players.b12705048.models.opponent_model import TopologicalOpponentNet, compute_kl_loss
+from src.players.b12705048.models.opp_net.model import TopologicalOpponentNet, compute_kl_loss
 
 def train_model(dataset_path="large_dataset.npz", epochs=50, batch_size=256, lr=1e-3):
     if not os.path.exists(dataset_path):
@@ -36,9 +36,9 @@ def train_model(dataset_path="large_dataset.npz", epochs=50, batch_size=256, lr=
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
     best_val_loss = float('inf')
-    save_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")
+    save_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "models", "opp_net")
     os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, "topological_net.pth")
+    save_path = os.path.join(save_dir, "weights.pth")
     
     print(f"Starting training for {epochs} epochs...")
     

@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 
 from src.engine import Engine
 from src.players.b12705048.agents.flatmc import FlatMC
-from src.players.b12705048.models.feature_extractor import (
+from src.players.b12705048.models.opp_net.feature_extractor import (
     build_feature_vector,
     build_target_matrix,
     get_gap_capacities,

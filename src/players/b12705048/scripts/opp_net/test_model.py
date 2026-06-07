@@ -3,8 +3,8 @@ import sys
 import numpy as np
 import torch
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-from src.players.b12705048.models.opponent_model import TopologicalOpponentNet, compute_kl_loss
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
+from src.players.b12705048.models.opp_net.model import TopologicalOpponentNet, compute_kl_loss
 
 def test_pipeline():
     dataset_path = "test_dataset.npz"
