@@ -88,7 +88,7 @@ class FlatMC:
         model (TopologicalOpponentNet): Loaded neural determinization model.
     """
 
-    def __init__(self, player_idx, exploration_ratio=0.5, tau=1.0,
+    def __init__(self, player_idx, exploration_ratio=0.8, tau=1.0,
                  time_limit=0.8):
         """
         Initialize the Neural Determinization Monte Carlo player.
