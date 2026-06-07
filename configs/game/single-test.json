@@ -1,26 +1,25 @@
 {
     "players": [
         [
-            "src.players.TA.random_player",
-            "RandomPlayer"
-        ],
-        [
-            "src.players.TA.random_player",
-            "RandomPlayer",
+            "src.players.TA.public_baselines2",
+            "Baseline10",
             {}
         ],
         [
-            "src.players.TA.random_player",
-            "RandomPlayer",
-            {},
-            "label"
+            "src.players.b12705048.agents.flatmc_baseline",
+            "FlatMCBaseline",
+            {}
         ],
-        {
-            "path": "src.players.b12705048.agents.flatmc",
-            "class": "FlatMC",
-            "args": {},
-            "label": "FMC"
-        }
+        [
+            "src.players.b12705048.agents.flatmc",
+            "FlatMC",
+            {}
+        ],
+        [
+            "src.players.b12705048.agents.greedy",
+            "Maximizer",
+            {}
+        ]
     ],
     "engine": {
         "n_players": 4,
