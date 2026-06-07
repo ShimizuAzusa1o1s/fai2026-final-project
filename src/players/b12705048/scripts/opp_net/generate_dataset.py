@@ -15,10 +15,8 @@ from src.players.b12705048.models.opp_net.feature_extractor import (
     get_topological_gaps
 )
 
-# Import other agents for chaos training
+# Import baseline agent
 from src.players.b12705048.agents.flatmc_baseline import FlatMCBaseline
-from src.players.b12705048.agents.greedy import Maximizer
-from src.players.TA.public_baselines2 import Baseline10
 
 def get_player_hand_at_round(history_matrix, target_round, player_idx):
     """
@@ -47,19 +45,21 @@ def get_unseen_cards_at_round(total_cards, board, hand, history_matrix, target_r
         
     return list(total_cards - visible)
 
-def generate_games(num_games=10, save_path="dataset.npz"):
-    print(f"Generating {num_games} games using mixed-opponent (chaos) self-play...")
+def generate_games(num_games=10, save_path=None, level=1):
+    if save_path is None:
+        save_path = f"dataset_l{level}.npz"
+        
+    print(f"Generating {num_games} games using Level {level} self-play...")
     
-    # Initialize pools of different players to mix and match per game
+    # Initialize player pools
     print("Initializing player pools...")
-    flatmc_pool = [FlatMC(player_idx=i, time_limit=0.8) for i in range(4)]
-    baseline_pool = [FlatMCBaseline(player_idx=i, time_limit=0.1) for i in range(4)]
-    maximizer_pool = [Maximizer(player_idx=i) for i in range(4)]
-    
-    # Suppress output during Baseline10 init to avoid spam
-    from src.engine import silenced_if
-    with silenced_if(True):
-        b10_pool = [Baseline10(player_idx=i) for i in range(4)]
+    if level == 1:
+        players_pool = [FlatMCBaseline(player_idx=i, time_limit=0.1) for i in range(4)]
+    elif level == 2:
+        from src.players.b12705048.agents.flatmc_cpp import FlatMCCPP
+        players_pool = [FlatMCCPP(player_idx=i, time_limit=0.2, model_level=1) for i in range(4)]
+    else:
+        raise ValueError(f"Unknown level: {level}")
     
     cfg = {
         "n_players": 4,
@@ -75,18 +75,9 @@ def generate_games(num_games=10, save_path="dataset.npz"):
     total_cards = set(range(1, 105))
     
     for game_id in tqdm(range(num_games)):
-        # Randomly select a player from the pools for each seat
         players = []
         for i in range(4):
-            r = np.random.rand()
-            if r < 0.4:
-                players.append(flatmc_pool[i])
-            elif r < 0.6:
-                players.append(baseline_pool[i])
-            elif r < 0.8:
-                players.append(maximizer_pool[i])
-            else:
-                players.append(b10_pool[i])
+            players.append(players_pool[i])
                 
         engine = Engine(cfg, players)
         # Note: the engine automatically resets and plays
@@ -143,10 +134,11 @@ def generate_games(num_games=10, save_path="dataset.npz"):
 import argparse
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate ML dataset using FlatMCSH self-play.")
+    parser = argparse.ArgumentParser(description="Generate ML dataset using self-play.")
     parser.add_argument("--games", type=int, default=10, help="Number of games to simulate.")
-    parser.add_argument("--out", type=str, default="dataset.npz", help="Output .npz file path.")
+    parser.add_argument("--out", type=str, default=None, help="Output .npz file path.")
+    parser.add_argument("--level", type=int, choices=[1, 2], default=1, help="Level of training data to generate (1 or 2).")
     
     args = parser.parse_args()
     
-    generate_games(num_games=args.games, save_path=args.out)
+    generate_games(num_games=args.games, save_path=args.out, level=args.level)

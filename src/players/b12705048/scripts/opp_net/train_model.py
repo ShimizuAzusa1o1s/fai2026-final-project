@@ -8,7 +8,10 @@ from torch.utils.data import TensorDataset, DataLoader, random_split
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 from src.players.b12705048.models.opp_net.model import TopologicalOpponentNet, compute_kl_loss
 
-def train_model(dataset_path="large_dataset.npz", epochs=50, batch_size=256, lr=1e-3):
+def train_model(dataset_path=None, epochs=50, batch_size=256, lr=1e-3, level=1):
+    if dataset_path is None:
+        dataset_path = f"dataset_l{level}.npz"
+        
     if not os.path.exists(dataset_path):
         print(f"Error: {dataset_path} not found.")
         return
@@ -38,7 +41,7 @@ def train_model(dataset_path="large_dataset.npz", epochs=50, batch_size=256, lr=
     best_val_loss = float('inf')
     save_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "models", "opp_net")
     os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, "weights.pth")
+    save_path = os.path.join(save_dir, f"weights_l{level}.pth")
     
     print(f"Starting training for {epochs} epochs...")
     
@@ -93,10 +96,11 @@ def train_model(dataset_path="large_dataset.npz", epochs=50, batch_size=256, lr=
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", type=str, default="large_dataset.npz")
+    parser.add_argument("--data", type=str, default=None)
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch", type=int, default=256)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--level", type=int, choices=[1, 2], default=1)
     args = parser.parse_args()
     
-    train_model(dataset_path=args.data, epochs=args.epochs, batch_size=args.batch, lr=args.lr)
+    train_model(dataset_path=args.data, epochs=args.epochs, batch_size=args.batch, lr=args.lr, level=args.level)

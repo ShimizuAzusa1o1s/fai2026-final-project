@@ -120,36 +120,31 @@ class FlatMCCPP:
         epsilon_alpha (float): Scaling factor for entropy-adaptive ε-smoothing.
     """
 
-    def __init__(self, player_idx, uniform_ratio=0.2, minmax_ratio=0.3, tau=5.0,
-                 time_limit=0.8, epsilon_alpha=0.5, selection_strategy="halving",
-                 disable_heuristic_safe=False, disable_heuristic_fill=False, disable_heuristic_undercut=False):
+    def __init__(self, player_idx, exploration_ratio=0.8, tau=0.5, time_limit=0.8,
+                 epsilon_alpha=0.0, disable_heuristic_safe=True, disable_heuristic_fill=False, disable_heuristic_undercut=False,
+                 model_level=1):
         """
         Initialize the Neural Determinization Monte Carlo player.
 
         Args:
             player_idx: The player's seat index in the game (0-3).
-            uniform_ratio: Fraction of rollout turns using purely uniform-random
-                play. Acts as blind exploration noise.
-            minmax_ratio: Fraction of rollout turns using Min-Max alternating
-                play. Simulates aggressive extreme stall/undercut tactics.
+            exploration_ratio: Fraction of rollout turns using uniform-random
+                play instead of Softmax-safety. Acts as exploration noise.
+                Default 0.2 means 20% of per-turn decisions are random.
             tau: Temperature for the Softmax rollout distribution. Controls
                 how strongly the safety score biases card selection.
             time_limit: Simulation budget in seconds.
-            epsilon_alpha: Scaling factor α for entropy-adaptive ε-smoothing
-                of neural predictions. Higher α → more conservative (closer
-                to uniform). Formula: ε = min(0.5, α · H/log(5)).
-            selection_strategy: How to eliminate candidates ("halving", "uniform", "top2").
+            model_level: Which level of weights to load (1 for weights_l1.pth, etc).
         """
         self.player_idx = player_idx
         self.time_limit = time_limit
-        self.uniform_ratio = uniform_ratio
-        self.minmax_ratio = minmax_ratio
+        self.exploration_ratio = exploration_ratio
         self.tau = tau
         self.epsilon_alpha = epsilon_alpha
-        self.selection_strategy = selection_strategy
         self.disable_heuristic_safe = disable_heuristic_safe
         self.disable_heuristic_fill = disable_heuristic_fill
         self.disable_heuristic_undercut = disable_heuristic_undercut
+        self.model_level = model_level
         self.debug = False
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
@@ -162,7 +157,7 @@ class FlatMCCPP:
         # Resolve path to weights (agents/ → models/)
         current_dir = os.path.dirname(os.path.abspath(__file__))
         parent_dir = os.path.dirname(current_dir)
-        model_path = os.path.join(parent_dir, "models", "opp_net", "weights.pth")
+        model_path = os.path.join(parent_dir, "models", "opp_net", f"weights_l{self.model_level}.pth")
 
         if os.path.exists(model_path):
             self.model.load_state_dict(
@@ -269,29 +264,21 @@ class FlatMCCPP:
                     x_t, gap_capacities=c_t
                 ).squeeze(0).cpu().numpy()  # Shape: (3, 5)
 
-            # ---- Entropy-Adaptive ε-Smoothing (Phase 3 from analysis) ----
-            # Instead of a fixed ε=0.2, we compute ε per-opponent based on
-            # the NN's predictive entropy. When the NN is uncertain (high
-            # entropy), we blend more heavily toward uniform to avoid
-            # overcommitting to noisy predictions.
-            #
-            # Formula: ε_opp = min(0.5, α · H(p_opp) / log(5))
-            #   where H(p) = -Σ p_k log(p_k) is the Shannon entropy
-            #   and log(5) ≈ 1.609 is the maximum entropy for 5 buckets.
-            H_per_opp = -np.sum(
-                nn_probs * np.log(nn_probs + 1e-10), axis=1
-            )  # Shape: (3,)
-            H_max = np.log(5)
-            epsilon_per_opp = np.minimum(
-                0.5, self.epsilon_alpha * (H_per_opp / H_max)
-            )  # Shape: (3,)
-
-            # Blend: probs = (1-ε) · nn_probs + ε · uniform
-            uniform_probs = np.full((3, 5), 0.2)
-            probs = (
-                (1 - epsilon_per_opp[:, None]) * nn_probs
-                + epsilon_per_opp[:, None] * uniform_probs
-            )
+            if self.epsilon_alpha > 0.0:
+                H_per_opp = -np.sum(
+                    nn_probs * np.log(nn_probs + 1e-10), axis=1
+                )
+                H_max = np.log(5)
+                epsilon_per_opp = np.minimum(
+                    0.5, self.epsilon_alpha * (H_per_opp / H_max)
+                )
+                uniform_probs = np.full((3, 5), 0.2)
+                probs = (
+                    (1 - epsilon_per_opp[:, None]) * nn_probs
+                    + epsilon_per_opp[:, None] * uniform_probs
+                )
+            else:
+                probs = nn_probs
         else:
             # No history available — fall back to uniform bucket probs
             probs = np.full((3, 5), 0.2)
@@ -360,34 +347,32 @@ class FlatMCCPP:
         # ---- Case 1: Safe placement (row not yet full) ----
         cond_safe = (~is_invalid) & (target_lengths < 5)
         if np.any(cond_safe):
-            safe_cards = np.where(cond_safe)[0]
-            safe_tails = orig_tails[target_rows[cond_safe]]
-            safe_lengths = target_lengths[cond_safe]
-            safe_rbulls = target_rbulls[cond_safe]
-            safe_deltas = min_deltas[cond_safe]
-
-            # p_opp[opp, i] = P(opp plays card in gap [tail+1, c-1])
-            p_opp = W_cumsum[:, safe_cards] - W_cumsum[:, safe_tails + 1]
-            p_opp = np.clip(p_opp, 0.0, 1.0)
-            
-            p0, p1, p2 = p_opp[0], p_opp[1], p_opp[2]
-            slots_needed = 5 - safe_lengths
-            
-            # Poisson-Binomial probabilities for 1, 2, or 3 invaders
-            P_1 = 1.0 - (1.0 - p0) * (1.0 - p1) * (1.0 - p2)
-            P_2 = p0*p1*(1.0 - p2) + p0*p2*(1.0 - p1) + p1*p2*(1.0 - p0) + p0*p1*p2
-            P_3 = p0*p1*p2
-            
-            p_fill = np.zeros_like(p0)
-            p_fill = np.where(slots_needed <= 1, P_1, p_fill)
-            p_fill = np.where(slots_needed == 2, P_2, p_fill)
-            p_fill = np.where(slots_needed >= 3, P_3, p_fill)
-
-            # Expected penalty = P(row fills) × row bullhead score
-            # Plus a small gap-distance penalty for sorting tiebreaking.
             if self.disable_heuristic_safe:
                 S[cond_safe] = 0.0
             else:
+                safe_cards = np.where(cond_safe)[0]
+                safe_tails = orig_tails[target_rows[cond_safe]]
+                safe_lengths = target_lengths[cond_safe]
+                safe_rbulls = target_rbulls[cond_safe]
+                safe_deltas = min_deltas[cond_safe]
+
+                # p_opp[opp, i] = P(opp plays card in gap [tail+1, c-1])
+                p_opp = W_cumsum[:, safe_cards] - W_cumsum[:, safe_tails + 1]
+                p_opp = np.clip(p_opp, 0.0, 1.0)
+                
+                p0, p1, p2 = p_opp[0], p_opp[1], p_opp[2]
+                slots_needed = 5 - safe_lengths
+                
+                # Poisson-Binomial probabilities for 1, 2, or 3 invaders
+                P_1 = 1.0 - (1.0 - p0) * (1.0 - p1) * (1.0 - p2)
+                P_2 = p0*p1*(1.0 - p2) + p0*p2*(1.0 - p1) + p1*p2*(1.0 - p0) + p0*p1*p2
+                P_3 = p0*p1*p2
+                
+                p_fill = np.zeros_like(p0)
+                p_fill = np.where(slots_needed <= 1, P_1, p_fill)
+                p_fill = np.where(slots_needed == 2, P_2, p_fill)
+                p_fill = np.where(slots_needed >= 3, P_3, p_fill)
+
                 S[cond_safe] = -(p_fill * safe_rbulls + 0.01 * safe_deltas)
 
         # ---- Case 2: Row-filling placement (row already has 5 cards) ----
@@ -423,9 +408,9 @@ class FlatMCCPP:
         ]
 
         for stage in range(n_stages):
-            # FlatMC averages about 6 iterations of 5000 batch_size per stage in Python.
-            # We hardcode 6 iterations to perfectly match its simulation volume.
-            for _ in range(6):
+            milestone = stage_milestones[stage]
+
+            while time.perf_counter() < milestone:
                 num_cand = len(candidates)
                 sims_per = self.batch_size // num_cand
                 budget = {c: sims_per for c in candidates}
@@ -450,8 +435,8 @@ class FlatMCCPP:
 
                     fast_engine.resolve_batch_with_sampling(
                         n_turns, self.player_idx,
-                        ctypes.c_float(self.uniform_ratio),
-                        ctypes.c_float(self.minmax_ratio),
+                        ctypes.c_float(0.0),
+                        ctypes.c_float(self.exploration_ratio),
                         ctypes.c_float(self.tau),
                         orig_tails_c, orig_lengths_c, orig_rbulls_c,
                         lookup_c, card_log_weights_c, S_c,
@@ -474,12 +459,7 @@ class FlatMCCPP:
                 candidates.sort(
                     key=lambda c: stats_penalty[c] / max(1, stats_visits[c])
                 )
-                if self.selection_strategy == "uniform":
-                    survivors = len(candidates)
-                elif self.selection_strategy == "top2":
-                    survivors = min(2, len(candidates))
-                else:
-                    survivors = max(1, len(candidates) // 2)
+                survivors = max(1, len(candidates) // 2)
                 if self.debug:
                     # Clean formatting to avoid numpy object reprs in the log
                     clean_scores = {c: round(float(stats_penalty[c] / max(1, stats_visits[c])), 2) for c in candidates}

@@ -2,12 +2,6 @@
     "baselines": [
         [
             "src.players.TA.public_baselines2",
-            "Baseline9",
-            {},
-            "B9"
-        ],
-        [
-            "src.players.TA.public_baselines2",
             "Baseline10",
             {},
             "B10"
@@ -15,18 +9,43 @@
     ],
     "players": [
         [
-            "src.players.b12705048.agents.flatmc",
-            "FlatMC",
+            "src.players.b12705048.agents.flatmc_cpp",
+            "FlatMCCPP",
             {
-                "time_limit": 0.8
-            }
+                "time_limit": 0.2,
+                "exploration_ratio": 0.8,
+                "tau": 0.5,
+                "disable_heuristic_safe": true,
+                "disable_heuristic_fill": false,
+                "disable_heuristic_undercut": false
+            },
+            "AllHeur"
         ],
         [
-            "src.players.b12705048.agents.flatmc_baseline",
-            "FlatMCBaseline",
+            "src.players.b12705048.agents.flatmc_cpp",
+            "FlatMCCPP",
             {
-                "time_limit": 0.1
-            }
+                "time_limit": 0.2,
+                "exploration_ratio": 0.8,
+                "tau": 0.5,
+                "disable_heuristic_safe": true,
+                "disable_heuristic_fill": true,
+                "disable_heuristic_undercut": false
+            },
+            "NoFill"
+        ],
+        [
+            "src.players.b12705048.agents.flatmc_cpp",
+            "FlatMCCPP",
+            {
+                "time_limit": 0.2,
+                "exploration_ratio": 0.8,
+                "tau": 0.5,
+                "disable_heuristic_safe": true,
+                "disable_heuristic_fill": false,
+                "disable_heuristic_undercut": true
+            },
+            "NoUndercut"
         ]
     ],
     "engine": {

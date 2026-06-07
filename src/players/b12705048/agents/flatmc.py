@@ -85,11 +85,10 @@ class FlatMC:
         bullhead_lookup (np.ndarray): O(1) bullhead penalty lookup table.
         device (torch.device): PyTorch device for NN inference.
         model (TopologicalOpponentNet): Loaded neural determinization model.
-        model (TopologicalOpponentNet): Loaded neural determinization model.
+        model_level (int): The version of the weights to load.
     """
 
-    def __init__(self, player_idx, exploration_ratio=0.8, tau=1.0,
-                 time_limit=0.8):
+    def __init__(self, player_idx, exploration_ratio=0.8, tau=0.5, time_limit=0.8, model_level=1):
         """
         Initialize the Neural Determinization Monte Carlo player.
 
@@ -101,12 +100,14 @@ class FlatMC:
             tau: Temperature for the Softmax rollout distribution. Controls
                 how strongly the safety score biases card selection.
             time_limit: Simulation budget in seconds.
+            model_level: Which level of weights to load (1 for weights_l1.pth, etc).
         """
         self.player_idx = player_idx
         self.time_limit = time_limit
         self.exploration_ratio = exploration_ratio
         self.tau = tau
-        self.debug = True
+        self.model_level = model_level
+        self.debug = False
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
         self.bullhead_lookup = BULLHEAD_LOOKUP
@@ -118,7 +119,7 @@ class FlatMC:
         # Resolve path to weights (agents/ → models/)
         current_dir = os.path.dirname(os.path.abspath(__file__))
         parent_dir = os.path.dirname(current_dir)
-        model_path = os.path.join(parent_dir, "models", "opp_net", "weights.pth")
+        model_path = os.path.join(parent_dir, "models", "opp_net", f"weights_l{self.model_level}.pth")
 
         if os.path.exists(model_path):
             self.model.load_state_dict(
