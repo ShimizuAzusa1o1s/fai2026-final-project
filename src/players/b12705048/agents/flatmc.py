@@ -85,11 +85,11 @@ class FlatMC:
         bullhead_lookup (np.ndarray): O(1) bullhead penalty lookup table.
         device (torch.device): PyTorch device for NN inference.
         model (TopologicalOpponentNet): Loaded neural determinization model.
-        epsilon_alpha (float): Scaling factor for entropy-adaptive ε-smoothing.
+        model (TopologicalOpponentNet): Loaded neural determinization model.
     """
 
     def __init__(self, player_idx, exploration_ratio=0.5, tau=1.0,
-                 time_limit=0.8, epsilon_alpha=0.5):
+                 time_limit=0.8):
         """
         Initialize the Neural Determinization Monte Carlo player.
 
@@ -101,15 +101,11 @@ class FlatMC:
             tau: Temperature for the Softmax rollout distribution. Controls
                 how strongly the safety score biases card selection.
             time_limit: Simulation budget in seconds.
-            epsilon_alpha: Scaling factor α for entropy-adaptive ε-smoothing
-                of neural predictions. Higher α → more conservative (closer
-                to uniform). Formula: ε = min(0.5, α · H/log(5)).
         """
         self.player_idx = player_idx
         self.time_limit = time_limit
         self.exploration_ratio = exploration_ratio
         self.tau = tau
-        self.epsilon_alpha = epsilon_alpha
         self.debug = False
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
@@ -229,29 +225,11 @@ class FlatMC:
                     x_t, gap_capacities=c_t
                 ).squeeze(0).cpu().numpy()  # Shape: (3, 5)
 
-            # ---- Entropy-Adaptive ε-Smoothing (Phase 3 from analysis) ----
-            # Instead of a fixed ε=0.2, we compute ε per-opponent based on
-            # the NN's predictive entropy. When the NN is uncertain (high
-            # entropy), we blend more heavily toward uniform to avoid
-            # overcommitting to noisy predictions.
-            #
-            # Formula: ε_opp = min(0.5, α · H(p_opp) / log(5))
-            #   where H(p) = -Σ p_k log(p_k) is the Shannon entropy
-            #   and log(5) ≈ 1.609 is the maximum entropy for 5 buckets.
-            H_per_opp = -np.sum(
-                nn_probs * np.log(nn_probs + 1e-10), axis=1
-            )  # Shape: (3,)
-            H_max = np.log(5)
-            epsilon_per_opp = np.minimum(
-                0.5, self.epsilon_alpha * (H_per_opp / H_max)
-            )  # Shape: (3,)
-
-            # Blend: probs = (1-ε) · nn_probs + ε · uniform
-            uniform_probs = np.full((3, 5), 0.2)
-            probs = (
-                (1 - epsilon_per_opp[:, None]) * nn_probs
-                + epsilon_per_opp[:, None] * uniform_probs
-            )
+            # We explicitly DO NOT apply uniform smoothing to the neural
+            # network probabilities here. Ablation tests showed that trusting
+            # the NN entirely (alpha=0.0) significantly outperforms injecting
+            # any random uniform entropy!
+            probs = nn_probs
         else:
             # No history available — fall back to uniform bucket probs
             probs = np.full((3, 5), 0.2)
