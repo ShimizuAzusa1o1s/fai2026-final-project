@@ -88,7 +88,7 @@ class FlatMC:
         epsilon_alpha (float): Scaling factor for entropy-adaptive ε-smoothing.
     """
 
-    def __init__(self, player_idx, exploration_ratio=0.5, tau=5.0,
+    def __init__(self, player_idx, exploration_ratio=0.5, tau=1.0,
                  time_limit=0.8, epsilon_alpha=0.5):
         """
         Initialize the Neural Determinization Monte Carlo player.
@@ -314,38 +314,12 @@ class FlatMC:
 
         # ---- Precompute NN probabilities for exact safety evaluations ----
         W = np.exp(card_log_weights)  # Shape (3, 105)
-        W_cumsum = np.zeros((3, 106), dtype=np.float32)
-        W_cumsum[:, 1:] = np.cumsum(W, axis=1)
 
         # ---- Case 1: Safe placement (row not yet full) ----
-        cond_safe = (~is_invalid) & (target_lengths < 5)
-        if np.any(cond_safe):
-            safe_cards = np.where(cond_safe)[0]
-            safe_tails = orig_tails[target_rows[cond_safe]]
-            safe_lengths = target_lengths[cond_safe]
-            safe_rbulls = target_rbulls[cond_safe]
-            safe_deltas = min_deltas[cond_safe]
-
-            # p_opp[opp, i] = P(opp plays card in gap [tail+1, c-1])
-            p_opp = W_cumsum[:, safe_cards] - W_cumsum[:, safe_tails + 1]
-            p_opp = np.clip(p_opp, 0.0, 1.0)
-            
-            p0, p1, p2 = p_opp[0], p_opp[1], p_opp[2]
-            slots_needed = 5 - safe_lengths
-            
-            # Poisson-Binomial probabilities for 1, 2, or 3 invaders
-            P_1 = 1.0 - (1.0 - p0) * (1.0 - p1) * (1.0 - p2)
-            P_2 = p0*p1*(1.0 - p2) + p0*p2*(1.0 - p1) + p1*p2*(1.0 - p0) + p0*p1*p2
-            P_3 = p0*p1*p2
-            
-            p_fill = np.zeros_like(p0)
-            p_fill = np.where(slots_needed <= 1, P_1, p_fill)
-            p_fill = np.where(slots_needed == 2, P_2, p_fill)
-            p_fill = np.where(slots_needed >= 3, P_3, p_fill)
-
-            # Expected penalty = P(row fills) × row bullhead score
-            # Plus a small gap-distance penalty for sorting tiebreaking.
-            S[cond_safe] = -(p_fill * safe_rbulls + 0.01 * safe_deltas)
+        # The Poisson-Binomial heuristic was empirically proven to be
+        # counter-productive during rollout tests since MC rollouts already 
+        # naturally discover safe gap invasions. Safe cards remain at their initial 0 penalty.
+        # (S is initialized to zeros, so no action is needed here).
 
         # ---- Case 2: Row-filling placement (row already has 5 cards) ----
         cond_fill = (~is_invalid) & (target_lengths == 5)

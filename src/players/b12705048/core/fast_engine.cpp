@@ -10,7 +10,8 @@ extern "C" {
 void resolve_batch_with_sampling(
     int n_turns,
     int player_idx,
-    float exploration_ratio,
+    float uniform_ratio,
+    float minmax_ratio,
     float tau,
     const int* orig_tails,          // [4]
     const int* orig_lengths,        // [4]
@@ -90,11 +91,16 @@ void resolve_batch_with_sampling(
                     available[scores[t].card] = false;
                 }
                 
-                bool explore = unif(rng) < exploration_ratio;
+                float policy_u = unif(rng);
                 struct CardPlayScore { int card; float score; };
                 CardPlayScore play_scores[10];
                 
-                if (explore) {
+                if (policy_u < uniform_ratio) {
+                    for(int t = 0; t < n_turns; ++t) {
+                        play_scores[t].card = scores[t].card;
+                        play_scores[t].score = unif(rng);
+                    }
+                } else if (policy_u < uniform_ratio + minmax_ratio) {
                     std::sort(scores, scores + n_turns, [](const CardScore& a, const CardScore& b) {
                         return a.card < b.card;
                     });
@@ -128,11 +134,16 @@ void resolve_batch_with_sampling(
             my_play[0] = cand_card;
             
             if (n_my_rest > 0) {
-                bool explore = unif(rng) < exploration_ratio;
+                float policy_u = unif(rng);
                 struct CardPlayScore { int card; float score; };
                 CardPlayScore play_scores[10];
                 
-                if (explore) {
+                if (policy_u < uniform_ratio) {
+                    for(int t = 0; t < n_my_rest; ++t) {
+                        play_scores[t].card = my_rest[t];
+                        play_scores[t].score = unif(rng);
+                    }
+                } else if (policy_u < uniform_ratio + minmax_ratio) {
                     std::sort(my_rest, my_rest + n_my_rest);
                     int left = 0;
                     int right = n_my_rest - 1;

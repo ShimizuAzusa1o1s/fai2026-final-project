@@ -60,7 +60,7 @@ HAS_CPP = False
 try:
     fast_engine = ctypes.CDLL(lib_path)
     fast_engine.resolve_batch_with_sampling.argtypes = [
-        ctypes.c_int, ctypes.c_int, ctypes.c_float, ctypes.c_float,
+        ctypes.c_int, ctypes.c_int, ctypes.c_float, ctypes.c_float, ctypes.c_float,
         np.ctypeslib.ndpointer(dtype=np.int32, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(dtype=np.int32, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(dtype=np.int32, flags='C_CONTIGUOUS'),
@@ -120,28 +120,36 @@ class FlatMCCPP:
         epsilon_alpha (float): Scaling factor for entropy-adaptive ε-smoothing.
     """
 
-    def __init__(self, player_idx, exploration_ratio=0.5, tau=5.0,
-                 time_limit=0.8, epsilon_alpha=0.5):
+    def __init__(self, player_idx, uniform_ratio=0.2, minmax_ratio=0.3, tau=5.0,
+                 time_limit=0.8, epsilon_alpha=0.5, selection_strategy="halving",
+                 disable_heuristic_safe=False, disable_heuristic_fill=False, disable_heuristic_undercut=False):
         """
         Initialize the Neural Determinization Monte Carlo player.
 
         Args:
             player_idx: The player's seat index in the game (0-3).
-            exploration_ratio: Fraction of rollout turns using uniform-random
-                play instead of Softmax-safety. Acts as exploration noise.
-                Default 0.2 means 20% of per-turn decisions are random.
+            uniform_ratio: Fraction of rollout turns using purely uniform-random
+                play. Acts as blind exploration noise.
+            minmax_ratio: Fraction of rollout turns using Min-Max alternating
+                play. Simulates aggressive extreme stall/undercut tactics.
             tau: Temperature for the Softmax rollout distribution. Controls
                 how strongly the safety score biases card selection.
             time_limit: Simulation budget in seconds.
             epsilon_alpha: Scaling factor α for entropy-adaptive ε-smoothing
                 of neural predictions. Higher α → more conservative (closer
                 to uniform). Formula: ε = min(0.5, α · H/log(5)).
+            selection_strategy: How to eliminate candidates ("halving", "uniform", "top2").
         """
         self.player_idx = player_idx
         self.time_limit = time_limit
-        self.exploration_ratio = exploration_ratio
+        self.uniform_ratio = uniform_ratio
+        self.minmax_ratio = minmax_ratio
         self.tau = tau
         self.epsilon_alpha = epsilon_alpha
+        self.selection_strategy = selection_strategy
+        self.disable_heuristic_safe = disable_heuristic_safe
+        self.disable_heuristic_fill = disable_heuristic_fill
+        self.disable_heuristic_undercut = disable_heuristic_undercut
         self.debug = False
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
@@ -377,15 +385,24 @@ class FlatMCCPP:
 
             # Expected penalty = P(row fills) × row bullhead score
             # Plus a small gap-distance penalty for sorting tiebreaking.
-            S[cond_safe] = -(p_fill * safe_rbulls + 0.01 * safe_deltas)
+            if self.disable_heuristic_safe:
+                S[cond_safe] = 0.0
+            else:
+                S[cond_safe] = -(p_fill * safe_rbulls + 0.01 * safe_deltas)
 
         # ---- Case 2: Row-filling placement (row already has 5 cards) ----
         cond_fill = (~is_invalid) & (target_lengths == 5)
-        S[cond_fill] = -target_rbulls[cond_fill].astype(np.float32)
+        if self.disable_heuristic_fill:
+            S[cond_fill] = 0.0
+        else:
+            S[cond_fill] = -target_rbulls[cond_fill].astype(np.float32)
 
         # ---- Case 3: Undercut (card lower than all row tails) ----
         if np.any(is_invalid):
-            S[is_invalid] = -np.min(orig_rbulls).astype(np.float32)
+            if self.disable_heuristic_undercut:
+                S[is_invalid] = 0.0
+            else:
+                S[is_invalid] = -np.min(orig_rbulls).astype(np.float32)
 
         # ================================================================
         # PHASE 4: SUCCESSIVE HALVING + MONTE CARLO SIMULATION
@@ -406,9 +423,9 @@ class FlatMCCPP:
         ]
 
         for stage in range(n_stages):
-            milestone = stage_milestones[stage]
-
-            while time.perf_counter() < milestone:
+            # FlatMC averages about 6 iterations of 5000 batch_size per stage in Python.
+            # We hardcode 6 iterations to perfectly match its simulation volume.
+            for _ in range(6):
                 num_cand = len(candidates)
                 sims_per = self.batch_size // num_cand
                 budget = {c: sims_per for c in candidates}
@@ -433,7 +450,8 @@ class FlatMCCPP:
 
                     fast_engine.resolve_batch_with_sampling(
                         n_turns, self.player_idx,
-                        ctypes.c_float(self.exploration_ratio),
+                        ctypes.c_float(self.uniform_ratio),
+                        ctypes.c_float(self.minmax_ratio),
                         ctypes.c_float(self.tau),
                         orig_tails_c, orig_lengths_c, orig_rbulls_c,
                         lookup_c, card_log_weights_c, S_c,
@@ -456,7 +474,12 @@ class FlatMCCPP:
                 candidates.sort(
                     key=lambda c: stats_penalty[c] / max(1, stats_visits[c])
                 )
-                survivors = max(1, len(candidates) // 2)
+                if self.selection_strategy == "uniform":
+                    survivors = len(candidates)
+                elif self.selection_strategy == "top2":
+                    survivors = min(2, len(candidates))
+                else:
+                    survivors = max(1, len(candidates) // 2)
                 if self.debug:
                     # Clean formatting to avoid numpy object reprs in the log
                     clean_scores = {c: round(float(stats_penalty[c] / max(1, stats_visits[c])), 2) for c in candidates}
