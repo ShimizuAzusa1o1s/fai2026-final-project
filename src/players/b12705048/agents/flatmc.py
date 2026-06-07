@@ -110,6 +110,7 @@ class FlatMC:
         self.exploration_ratio = exploration_ratio
         self.tau = tau
         self.epsilon_alpha = epsilon_alpha
+        self.debug = False
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
         self.bullhead_lookup = BULLHEAD_LOOKUP
@@ -149,11 +150,16 @@ class FlatMC:
         """
         start_time = time.perf_counter()
 
+        if self.debug:
+            print(f"\n{'='*50}\n[FlatMC] Turn Start | Hand: {hand}\n{'='*50}")
+
         # ================================================================
         # PHASE 1: STATE PARSING
         # Extract the current board state and compute which cards are
         # visible (on board or played in past rounds) vs. unseen.
         # ================================================================
+        if self.debug:
+            print("[Phase 1] State Parsing...")
         if isinstance(history, dict):
             board = history.get('board', [])
             target_round = history.get('round', 0)
@@ -202,6 +208,8 @@ class FlatMC:
         #   log P(card c | opponent) = log P(bucket_k) - log |bucket_k|
         # which is the Bayesian uniform-within-bucket decomposition.
         # ================================================================
+        if self.debug:
+            print(f"[Phase 2] Neural Determinization. Unseen Cards: {len(unseen_cards)}")
         if isinstance(history, dict) and 'score_history' in history:
             # Build the 125-dim feature vector for the neural network
             X = build_feature_vector(
@@ -351,32 +359,7 @@ class FlatMC:
         # ---- Case 3: Undercut (card lower than all row tails) ----
         # Must take the cheapest row. Penalty = min row score.
         if np.any(is_invalid):
-            invalid_cards = np.where(is_invalid)[0]
-            sorted_rbulls = np.sort(orig_rbulls)
-            min_row_1 = float(sorted_rbulls[0])
-            min_row_2 = float(sorted_rbulls[1]) if len(sorted_rbulls) > 1 else min_row_1
-            
-            min_tail = int(np.min(orig_tails))
-            
-            # P_undercut for each opponent (probability they play < min_tail)
-            p_u = np.clip(W_cumsum[:, min_tail] - W_cumsum[:, 1], 0.0, 1.0)
-            p_shift = 1.0 - (1.0 - p_u[0]) * (1.0 - p_u[1]) * (1.0 - p_u[2])
-            
-            # If a shift occurs, what is the probability our card 'c' is safe?
-            # It's safe if the opponent's undercut 'U' is < c.
-            W_sum = np.sum(W, axis=0)
-            W_sum_cumsum = np.cumsum(W_sum)
-            denom = W_sum_cumsum[min_tail - 1]
-            
-            if denom > 1e-9:
-                # invalid_cards are >= 1, so invalid_cards - 1 is >= 0
-                P_safe = W_sum_cumsum[invalid_cards - 1] / denom
-            else:
-                P_safe = np.zeros_like(invalid_cards, dtype=np.float32)
-                
-            shifted_utility = -(1.0 - P_safe) * min_row_2
-            
-            S[is_invalid] = (1.0 - p_shift) * (-min_row_1) + p_shift * shifted_utility
+            S[is_invalid] = -np.min(orig_rbulls).astype(np.float32)
 
         # ================================================================
         # PHASE 4: SUCCESSIVE HALVING + MONTE CARLO SIMULATION
@@ -385,6 +368,10 @@ class FlatMC:
         # candidates. After each stage, eliminate the worst half.
         # (Karnin et al. 2013: optimal fixed-budget bandit algorithm)
         # ================================================================
+        if self.debug:
+            print(f"[Phase 3 Output] Safety Scores: { {c: round(float(S[c]), 2) for c in hand} }")
+            print("[Phase 4] Starting Successive Halving...")
+            
         candidates = list(hand)
         n_stages = max(1, math.ceil(math.log2(len(hand))))
         stage_milestones = [
@@ -618,8 +605,6 @@ class FlatMC:
 
                 # ========================================================
                 # PHASE 6: STAT AGGREGATION
-                # Accumulate the total penalty and visit count for each
-                # candidate card across all simulations in this batch.
                 # ========================================================
                 current_start = 0
                 for c in candidates:
@@ -643,16 +628,15 @@ class FlatMC:
                 candidates.sort(
                     key=lambda c: stats_penalty[c] / max(1, stats_visits[c])
                 )
-                keep = math.ceil(len(candidates) / 2)
-                candidates = candidates[:keep]
-
-        # ---- Final Selection ----
-        # Return the card with the lowest average penalty across all
-        # simulations (including those from earlier halving stages).
-        best_card = min(
-            hand,
-            key=lambda k: (
-                stats_penalty.get(k, 0.0) / max(1, stats_visits.get(k, 0))
-            )
-        )
+                survivors = max(1, len(candidates) // 2)
+                
+                if self.debug:
+                    print(f"[Phase 6] Stage {stage+1}/{n_stages} complete. Scores: { {c: round(stats_penalty[c]/max(1, stats_visits[c]), 2) for c in candidates} }")
+                    if len(candidates) > 1:
+                        print(f"          Eliminating worst {len(candidates) - survivors} cards. Survivors: {candidates[:survivors]}")
+                
+        best_card = candidates[0]
+        if self.debug:
+            print(f"-> FlatMC selected card: {best_card} in {time.perf_counter() - start_time:.3f}s")
+            print("="*50)
         return best_card
