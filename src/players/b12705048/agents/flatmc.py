@@ -88,25 +88,26 @@ class FlatMC:
         model_level (int): The version of the weights to load.
     """
 
-    def __init__(self, player_idx, exploration_ratio=0.8, tau=0.5, time_limit=0.8, model_level=1):
+    def __init__(self, player_idx, epsilon=0.8, tau=5.0, time_limit=0.8, model_level=1, use_neural_determinization=False):
         """
         Initialize the Neural Determinization Monte Carlo player.
 
         Args:
             player_idx: The player's seat index in the game (0-3).
-            exploration_ratio: Fraction of rollout turns using uniform-random
+            epsilon: Fraction of rollout turns using uniform-random
                 play instead of Softmax-safety. Acts as exploration noise.
-                Default 0.2 means 20% of per-turn decisions are random.
             tau: Temperature for the Softmax rollout distribution. Controls
                 how strongly the safety score biases card selection.
             time_limit: Simulation budget in seconds.
             model_level: Which level of weights to load (1 for weights_l1.pth, etc).
+            use_neural_determinization: Whether to use TopologicalOpponentNet.
         """
         self.player_idx = player_idx
         self.time_limit = time_limit
-        self.exploration_ratio = exploration_ratio
+        self.exploration_ratio = epsilon
         self.tau = tau
         self.model_level = model_level
+        self.use_neural_determinization = use_neural_determinization
         self.debug = False
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
@@ -206,8 +207,11 @@ class FlatMC:
         # which is the Bayesian uniform-within-bucket decomposition.
         # ================================================================
         if self.debug:
-            print(f"[Phase 2] Neural Determinization. Unseen Cards: {len(unseen_cards)}")
-        if isinstance(history, dict) and 'score_history' in history:
+            print(f"[Phase 2] Determinization. Unseen Cards: {len(unseen_cards)}")
+
+        card_log_weights = np.full((3, 105), -1e9, dtype=np.float32)
+
+        if self.use_neural_determinization and isinstance(history, dict) and 'score_history' in history:
             # Build the 125-dim feature vector for the neural network
             X = build_feature_vector(
                 history, target_round, self.player_idx,
@@ -226,49 +230,34 @@ class FlatMC:
                     x_t, gap_capacities=c_t
                 ).squeeze(0).cpu().numpy()  # Shape: (3, 5)
 
-            # We explicitly DO NOT apply uniform smoothing to the neural
-            # network probabilities here. Ablation tests showed that trusting
-            # the NN entirely (alpha=0.0) significantly outperforms injecting
-            # any random uniform entropy!
             probs = nn_probs
+            log_probs = np.log(probs + 1e-10)
+
+            for opp in range(3):
+                for c in unseen_cards:
+                    k = assign_card_to_bucket(c, sorted_row_ends)
+                    card_log_weights[opp, c] = (
+                        log_probs[opp, k] - np.log(max(1, capacities[k]))
+                    )
         else:
-            # No history available — fall back to uniform bucket probs
-            probs = np.full((3, 5), 0.2)
-            sorted_row_ends = get_topological_gaps(board)
-            capacities = get_gap_capacities(sorted_row_ends, unseen_cards)
-
-        # ---- Per-card log-weights via Bayes' rule ----
-        # For card c in bucket k:  log w(c) = log P(bucket_k) - log C_k
-        # Cards not in `unseen_cards` get -∞ weight (impossible to hold).
-        log_probs = np.log(probs + 1e-10)
-
-        card_log_weights = np.full((3, 105), -1e9, dtype=np.float32)
-        for opp in range(3):
-            for c in unseen_cards:
-                k = assign_card_to_bucket(c, sorted_row_ends)
-                card_log_weights[opp, c] = (
-                    log_probs[opp, k] - np.log(max(1, capacities[k]))
-                )
+            # Uniform log weights for pure random determinization
+            for opp in range(3):
+                card_log_weights[opp, unseen_cards] = 0.0
 
         # ================================================================
-        # PHASE 3: CALIBRATED SAFETY SCORE S(c)
-        # Compute a mathematically principled safety score for every card
-        # value (1–104). S(c) estimates the negative expected penalty (in
-        # bullheads) from playing card c into the current board.
+        # PHASE 3: HEURISTIC SAFETY SCORE S(c)
+        # Compute a simple deterministic safety score S(c) for every card
+        # value (1–104) based on gap distances and row penalties.
         #
         # Three cases:
         #   Case 1 (safe placement): c fits into a row without filling it.
-        #       Risk depends on opponents interposing cards in the gap. We compute
-        #       this exactly using the NN bucket probabilities via a Poisson-Binomial
-        #       distribution to find the probability of the row filling.
+        #       S(c) = -min_deltas (distance to closest row tail below).
         #
-        #   Case 2 (row-filling): c would be the 6th card → deterministic
-        #       penalty equal to the row's total bullheads.
+        #   Case 2 (row-filling): c would be the 6th card.
+        #       S(c) = -10.0 * total bullheads in the row.
         #
-        #   Case 3 (undercut): c < all row tails → forced to take the cheapest row.
-        #       We compute the exact Shifted Utility: the probability an opponent
-        #       also undercuts (causing a board reset) and the conditional probability
-        #       that our card c survives the shift.
+        #   Case 3 (undercut): c < all row tails.
+        #       S(c) = -100.0 (heavy penalty).
         # ================================================================
 
         # Compute delta (gap) from each card to each row tail
@@ -295,18 +284,21 @@ class FlatMC:
         W = np.exp(card_log_weights)  # Shape (3, 105)
 
         # ---- Case 1: Safe placement (row not yet full) ----
-        # The Poisson-Binomial heuristic was empirically proven to be
-        # counter-productive during rollout tests since MC rollouts already 
-        # naturally discover safe gap invasions. Safe cards remain at their initial 0 penalty.
-        # (S is initialized to zeros, so no action is needed here).
+        cond1 = (~is_invalid) & (target_lengths < 5)
+        S[cond1] = -min_deltas[cond1]
 
         # ---- Case 2: Row-filling placement (row already has 5 cards) ----
-        cond_fill = (~is_invalid) & (target_lengths == 5)
-        S[cond_fill] = -target_rbulls[cond_fill].astype(np.float32)
+        cond2 = (~is_invalid) & (target_lengths == 5)
+        S[cond2] = -(10.0 * target_rbulls[cond2])
 
         # ---- Case 3: Undercut (card lower than all row tails) ----
-        if np.any(is_invalid):
-            S[is_invalid] = -np.min(orig_rbulls).astype(np.float32)
+        S[is_invalid] = -100.0
+
+        # ---- Static Priors B(c) ----
+        B = np.zeros(105, dtype=np.float32)
+        B[1:11] = 2.0
+        B[95:105] = 2.0
+        S += B
 
         # ================================================================
         # PHASE 4: SUCCESSIVE HALVING + MONTE CARLO SIMULATION

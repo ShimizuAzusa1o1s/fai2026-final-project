@@ -117,34 +117,29 @@ class FlatMCCPP:
         bullhead_lookup (np.ndarray): O(1) bullhead penalty lookup table.
         device (torch.device): PyTorch device for NN inference.
         model (TopologicalOpponentNet): Loaded neural determinization model.
-        epsilon_alpha (float): Scaling factor for entropy-adaptive ε-smoothing.
+        use_neural_determinization (bool): Whether to use Neural Determinization.
     """
 
-    def __init__(self, player_idx, exploration_ratio=0.8, tau=0.5, time_limit=0.8,
-                 epsilon_alpha=0.0, disable_heuristic_safe=True, disable_heuristic_fill=False, disable_heuristic_undercut=False,
-                 model_level=1):
+    def __init__(self, player_idx, epsilon=0.8, tau=5.0, time_limit=0.8, model_level=1, use_neural_determinization=False):
         """
         Initialize the Neural Determinization Monte Carlo player.
 
         Args:
             player_idx: The player's seat index in the game (0-3).
-            exploration_ratio: Fraction of rollout turns using uniform-random
+            epsilon: Fraction of rollout turns using uniform-random
                 play instead of Softmax-safety. Acts as exploration noise.
-                Default 0.2 means 20% of per-turn decisions are random.
             tau: Temperature for the Softmax rollout distribution. Controls
                 how strongly the safety score biases card selection.
             time_limit: Simulation budget in seconds.
             model_level: Which level of weights to load (1 for weights_l1.pth, etc).
+            use_neural_determinization: Whether to use Neural Determinization.
         """
         self.player_idx = player_idx
         self.time_limit = time_limit
-        self.exploration_ratio = exploration_ratio
+        self.exploration_ratio = epsilon
         self.tau = tau
-        self.epsilon_alpha = epsilon_alpha
-        self.disable_heuristic_safe = disable_heuristic_safe
-        self.disable_heuristic_fill = disable_heuristic_fill
-        self.disable_heuristic_undercut = disable_heuristic_undercut
         self.model_level = model_level
+        self.use_neural_determinization = use_neural_determinization
         self.debug = False
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
@@ -244,8 +239,11 @@ class FlatMCCPP:
         # which is the Bayesian uniform-within-bucket decomposition.
         # ================================================================
         if self.debug:
-            print(f"[Phase 2] Neural Determinization. Unseen Cards: {len(unseen_cards)}")
-        if isinstance(history, dict) and 'score_history' in history:
+            print(f"[Phase 2] Determinization. Unseen Cards: {len(unseen_cards)}")
+
+        card_log_weights = np.full((3, 105), -1e9, dtype=np.float32)
+
+        if self.use_neural_determinization and isinstance(history, dict) and 'score_history' in history:
             # Build the 125-dim feature vector for the neural network
             X = build_feature_vector(
                 history, target_round, self.player_idx,
@@ -264,59 +262,34 @@ class FlatMCCPP:
                     x_t, gap_capacities=c_t
                 ).squeeze(0).cpu().numpy()  # Shape: (3, 5)
 
-            if self.epsilon_alpha > 0.0:
-                H_per_opp = -np.sum(
-                    nn_probs * np.log(nn_probs + 1e-10), axis=1
-                )
-                H_max = np.log(5)
-                epsilon_per_opp = np.minimum(
-                    0.5, self.epsilon_alpha * (H_per_opp / H_max)
-                )
-                uniform_probs = np.full((3, 5), 0.2)
-                probs = (
-                    (1 - epsilon_per_opp[:, None]) * nn_probs
-                    + epsilon_per_opp[:, None] * uniform_probs
-                )
-            else:
-                probs = nn_probs
+            probs = nn_probs
+            log_probs = np.log(probs + 1e-10)
+
+            for opp in range(3):
+                for c in unseen_cards:
+                    k = assign_card_to_bucket(c, sorted_row_ends)
+                    card_log_weights[opp, c] = (
+                        log_probs[opp, k] - np.log(max(1, capacities[k]))
+                    )
         else:
-            # No history available — fall back to uniform bucket probs
-            probs = np.full((3, 5), 0.2)
-            sorted_row_ends = get_topological_gaps(board)
-            capacities = get_gap_capacities(sorted_row_ends, unseen_cards)
-
-        # ---- Per-card log-weights via Bayes' rule ----
-        # For card c in bucket k:  log w(c) = log P(bucket_k) - log C_k
-        # Cards not in `unseen_cards` get -∞ weight (impossible to hold).
-        log_probs = np.log(probs + 1e-10)
-
-        card_log_weights = np.full((3, 105), -1e9, dtype=np.float32)
-        for opp in range(3):
-            for c in unseen_cards:
-                k = assign_card_to_bucket(c, sorted_row_ends)
-                card_log_weights[opp, c] = (
-                    log_probs[opp, k] - np.log(max(1, capacities[k]))
-                )
+            # Uniform log weights for pure random determinization
+            for opp in range(3):
+                card_log_weights[opp, unseen_cards] = 0.0
 
         # ================================================================
-        # PHASE 3: CALIBRATED SAFETY SCORE S(c)
-        # Compute a mathematically principled safety score for every card
-        # value (1–104). S(c) estimates the negative expected penalty (in
-        # bullheads) from playing card c into the current board.
+        # PHASE 3: HEURISTIC SAFETY SCORE S(c)
+        # Compute a simple deterministic safety score S(c) for every card
+        # value (1–104) based on gap distances and row penalties.
         #
         # Three cases:
         #   Case 1 (safe placement): c fits into a row without filling it.
-        #       Risk depends on opponents interposing cards in the gap. We compute
-        #       this exactly using the NN bucket probabilities via a Poisson-Binomial
-        #       distribution to find the probability of the row filling.
+        #       S(c) = -min_deltas (distance to closest row tail below).
         #
-        #   Case 2 (row-filling): c would be the 6th card → deterministic
-        #       penalty equal to the row's total bullheads.
+        #   Case 2 (row-filling): c would be the 6th card.
+        #       S(c) = -10.0 * total bullheads in the row.
         #
-        #   Case 3 (undercut): c < all row tails → forced to take the cheapest row.
-        #       We compute the exact Shifted Utility: the probability an opponent
-        #       also undercuts (causing a board reset) and the conditional probability
-        #       that our card c survives the shift.
+        #   Case 3 (undercut): c < all row tails.
+        #       S(c) = -100.0 (heavy penalty).
         # ================================================================
 
         # Compute delta (gap) from each card to each row tail
@@ -341,53 +314,23 @@ class FlatMCCPP:
 
         # ---- Precompute NN probabilities for exact safety evaluations ----
         W = np.exp(card_log_weights)  # Shape (3, 105)
-        W_cumsum = np.zeros((3, 106), dtype=np.float32)
-        W_cumsum[:, 1:] = np.cumsum(W, axis=1)
 
         # ---- Case 1: Safe placement (row not yet full) ----
-        cond_safe = (~is_invalid) & (target_lengths < 5)
-        if np.any(cond_safe):
-            if self.disable_heuristic_safe:
-                S[cond_safe] = 0.0
-            else:
-                safe_cards = np.where(cond_safe)[0]
-                safe_tails = orig_tails[target_rows[cond_safe]]
-                safe_lengths = target_lengths[cond_safe]
-                safe_rbulls = target_rbulls[cond_safe]
-                safe_deltas = min_deltas[cond_safe]
-
-                # p_opp[opp, i] = P(opp plays card in gap [tail+1, c-1])
-                p_opp = W_cumsum[:, safe_cards] - W_cumsum[:, safe_tails + 1]
-                p_opp = np.clip(p_opp, 0.0, 1.0)
-                
-                p0, p1, p2 = p_opp[0], p_opp[1], p_opp[2]
-                slots_needed = 5 - safe_lengths
-                
-                # Poisson-Binomial probabilities for 1, 2, or 3 invaders
-                P_1 = 1.0 - (1.0 - p0) * (1.0 - p1) * (1.0 - p2)
-                P_2 = p0*p1*(1.0 - p2) + p0*p2*(1.0 - p1) + p1*p2*(1.0 - p0) + p0*p1*p2
-                P_3 = p0*p1*p2
-                
-                p_fill = np.zeros_like(p0)
-                p_fill = np.where(slots_needed <= 1, P_1, p_fill)
-                p_fill = np.where(slots_needed == 2, P_2, p_fill)
-                p_fill = np.where(slots_needed >= 3, P_3, p_fill)
-
-                S[cond_safe] = -(p_fill * safe_rbulls + 0.01 * safe_deltas)
+        cond1 = (~is_invalid) & (target_lengths < 5)
+        S[cond1] = -min_deltas[cond1]
 
         # ---- Case 2: Row-filling placement (row already has 5 cards) ----
-        cond_fill = (~is_invalid) & (target_lengths == 5)
-        if self.disable_heuristic_fill:
-            S[cond_fill] = 0.0
-        else:
-            S[cond_fill] = -target_rbulls[cond_fill].astype(np.float32)
+        cond2 = (~is_invalid) & (target_lengths == 5)
+        S[cond2] = -(10.0 * target_rbulls[cond2])
 
         # ---- Case 3: Undercut (card lower than all row tails) ----
-        if np.any(is_invalid):
-            if self.disable_heuristic_undercut:
-                S[is_invalid] = 0.0
-            else:
-                S[is_invalid] = -np.min(orig_rbulls).astype(np.float32)
+        S[is_invalid] = -100.0
+
+        # ---- Static Priors B(c) ----
+        B = np.zeros(105, dtype=np.float32)
+        B[1:11] = 2.0
+        B[95:105] = 2.0
+        S += B
 
         # ================================================================
         # PHASE 4: SUCCESSIVE HALVING + MONTE CARLO SIMULATION
