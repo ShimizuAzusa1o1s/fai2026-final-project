@@ -7,7 +7,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.engine import Engine
 from src.players.b12705048.agents.flatmc_cpp import FlatMCCPP
-from src.models.feature_extractor import (
+from src.players.b12705048.models.opp_net.feature_extractor import (
     build_feature_vector,
     build_target_matrix,
     get_gap_capacities,
@@ -33,7 +33,7 @@ def generate_games(num_games=10, save_path="data/dataset_l2.npz"):
     print(f"Generating {num_games} games using FlatMCCPP L1 self-play (for Level 2 trainer)...")
     
     # Initialize 4 FlatMCCPP players equipped with the Level 1 model
-    players = [FlatMCCPP(player_idx=i, time_limit=0.1, epsilon=0.2, tau=5.0, model_level=1, use_neural_determinization=True) for i in range(4)]
+    players = [FlatMCCPP(player_idx=i, time_limit=0.2, epsilon=0.8, tau=5.0, model_level=1, use_neural_determinization=False) for i in range(4)]
     
     cfg = {
         "n_players": 4,

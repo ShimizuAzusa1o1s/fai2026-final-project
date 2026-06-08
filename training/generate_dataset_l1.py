@@ -6,8 +6,8 @@ from tqdm import tqdm
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.engine import Engine
-from src.players.b12705048.agents.flatmc_sh import FlatMCSH
-from src.models.feature_extractor import (
+from src.players.b12705048.agents.flatmc_baseline import FlatMCBaseline
+from src.players.b12705048.models.opp_net.feature_extractor import (
     build_feature_vector,
     build_target_matrix,
     get_gap_capacities,
@@ -30,9 +30,9 @@ def get_unseen_cards_at_round(total_cards, board, hand, history_matrix, target_r
     return list(total_cards - visible)
 
 def generate_games(num_games=10, save_path="data/dataset_l1.npz"):
-    print(f"Generating {num_games} games using FlatMCSH self-play (for Level 1 trainer)...")
+    print(f"Generating {num_games} games using FlatMCBaseline self-play (for Level 1 trainer)...")
     
-    players = [FlatMCSH(player_idx=i, time_limit=0.1, epsilon=0.2, tau=5.0) for i in range(4)]
+    players = [FlatMCBaseline(player_idx=i, time_limit=0.1) for i in range(4)]
     
     cfg = {
         "n_players": 4,
