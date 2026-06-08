@@ -120,7 +120,7 @@ class FlatMCCPP:
         use_neural_determinization (bool): Whether to use Neural Determinization.
     """
 
-    def __init__(self, player_idx, epsilon=0.8, tau=5.0, time_limit=0.8, model_level=1, use_neural_determinization=False):
+    def __init__(self, player_idx, epsilon=0.8, tau=2.0, time_limit=0.8, model_level=2, use_neural_determinization=True):
         """
         Initialize the Neural Determinization Monte Carlo player.
 
