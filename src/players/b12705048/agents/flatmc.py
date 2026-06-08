@@ -76,8 +76,8 @@ class FlatMC:
     Attributes:
         player_idx (int): This agent's seat index (0-3).
         time_limit (float): Wall-clock simulation budget in seconds.
-        exploration_ratio (float): Fraction of rollout turns using uniform-
-            random policy instead of Softmax-safety (for exploration).
+        exploration_ratio (float): Fraction of rollout turns using Softmax-safety
+            (exploration) instead of Min-Max sequence (exploitation).
         tau (float): Temperature for Softmax(S/τ) rollout distribution.
             Higher τ → more uniform; lower τ → more greedy.
         total_cards (set[int]): The full card universe {1, …, 104}.
@@ -88,14 +88,14 @@ class FlatMC:
         model_level (int): The version of the weights to load.
     """
 
-    def __init__(self, player_idx, epsilon=0.8, tau=2.0, time_limit=0.8, model_level=2, use_neural_determinization=True):
+    def __init__(self, player_idx, epsilon=0.2, tau=1.0, time_limit=0.8, model_level=3, use_neural_determinization=True):
         """
         Initialize the Neural Determinization Monte Carlo player.
 
         Args:
             player_idx: The player's seat index in the game (0-3).
-            epsilon: Fraction of rollout turns using uniform-random
-                play instead of Softmax-safety. Acts as exploration noise.
+            epsilon: Fraction of rollout turns using Softmax-safety
+                heuristic instead of Min-Max sequence. Acts as exploration noise.
             tau: Temperature for the Softmax rollout distribution. Controls
                 how strongly the safety score biases card selection.
             time_limit: Simulation budget in seconds.
@@ -404,7 +404,7 @@ class FlatMC:
 
                 # 3. Per-simulation exploration mask
                 eps_mask = np.random.rand(actual_batch_size, 3, 1) < self.exploration_ratio
-                final_opp_cards = np.where(eps_mask, minmax_opp_cards, softmax_opp_cards)
+                final_opp_cards = np.where(eps_mask, softmax_opp_cards, minmax_opp_cards)
 
                 # Assemble the full hands_array for all 4 players
                 hands_array = np.zeros(
@@ -467,7 +467,7 @@ class FlatMC:
                         
                         # Per-simulation exploration mask (broadcast over n_rem)
                         eps_mask_my = np.random.rand(sims_per_cand, 1) < self.exploration_ratio
-                        final_my = np.where(eps_mask_my, minmax_my, softmax_my)
+                        final_my = np.where(eps_mask_my, softmax_my, minmax_my)
 
                         hands_array[
                             start_b:end_b, self.player_idx, 1:

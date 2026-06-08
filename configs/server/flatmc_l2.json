@@ -11,7 +11,7 @@
             "time_limit": 0.8,
             "model_level": 2,
             "use_neural_determinization": true,
-            "epsilon": 0.8,
+            "epsilon": 0.2,
             "tau": 5.0
         }
     }

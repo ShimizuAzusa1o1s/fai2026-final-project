@@ -108,8 +108,8 @@ class FlatMCCPP:
     Attributes:
         player_idx (int): This agent's seat index (0-3).
         time_limit (float): Wall-clock simulation budget in seconds.
-        exploration_ratio (float): Fraction of rollout turns using uniform-
-            random policy instead of Softmax-safety (for exploration).
+        exploration_ratio (float): Fraction of rollout turns using Softmax-safety
+            (exploration) instead of Min-Max sequence (exploitation).
         tau (float): Temperature for Softmax(S/τ) rollout distribution.
             Higher τ → more uniform; lower τ → more greedy.
         total_cards (set[int]): The full card universe {1, …, 104}.
@@ -120,14 +120,14 @@ class FlatMCCPP:
         use_neural_determinization (bool): Whether to use Neural Determinization.
     """
 
-    def __init__(self, player_idx, epsilon=0.8, tau=2.0, time_limit=0.8, model_level=2, use_neural_determinization=True):
+    def __init__(self, player_idx, epsilon=0.2, tau=1.0, time_limit=0.8, model_level=3, use_neural_determinization=True):
         """
         Initialize the Neural Determinization Monte Carlo player.
 
         Args:
             player_idx: The player's seat index in the game (0-3).
-            epsilon: Fraction of rollout turns using uniform-random
-                play instead of Softmax-safety. Acts as exploration noise.
+            epsilon: Fraction of rollout turns using Softmax-safety
+                heuristic instead of Min-Max sequence. Acts as exploration noise.
             tau: Temperature for the Softmax rollout distribution. Controls
                 how strongly the safety score biases card selection.
             time_limit: Simulation budget in seconds.
@@ -382,7 +382,7 @@ class FlatMCCPP:
                     fast_engine.resolve_batch_with_sampling(
                         n_turns, self.player_idx,
                         ctypes.c_float(0.0),
-                        ctypes.c_float(self.exploration_ratio),
+                        ctypes.c_float(1.0 - self.exploration_ratio),
                         ctypes.c_float(self.tau),
                         orig_tails_c, orig_lengths_c, orig_rbulls_c,
                         lookup_c, card_log_weights_c, S_c,
