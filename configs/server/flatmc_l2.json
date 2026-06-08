@@ -1,0 +1,18 @@
+{
+    "server_host": "ws6.csie.org",
+    "server_port": 8888,
+    "username": "ShimizuAzusa",
+    "password": "LaoWang1015@@",
+    "label": "AlephL2",
+    "player": {
+        "path": "src.players.b12705048.agents.flatmc",
+        "class": "FlatMC",
+        "args": {
+            "time_limit": 0.8,
+            "model_level": 2,
+            "use_neural_determinization": true,
+            "epsilon": 0.8,
+            "tau": 5.0
+        }
+    }
+}

@@ -152,7 +152,10 @@ class FlatMCCPP:
         # Resolve path to weights (agents/ → models/)
         current_dir = os.path.dirname(os.path.abspath(__file__))
         parent_dir = os.path.dirname(current_dir)
-        model_path = os.path.join(parent_dir, "models", "opp_net", f"weights_l{self.model_level}.pth")
+        if self.model_level == -1:
+            model_path = os.path.join(parent_dir, "models", "opp_net", "legacy_model.pt")
+        else:
+            model_path = os.path.join(parent_dir, "models", "opp_net", f"weights_l{self.model_level}.pth")
 
         if os.path.exists(model_path):
             self.model.load_state_dict(
