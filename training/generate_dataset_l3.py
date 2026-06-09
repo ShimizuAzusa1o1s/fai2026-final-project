@@ -46,10 +46,10 @@ def generate_games(num_games=10, save_path="data/dataset_l3.npz"):
     total_cards = set(range(1, 105))
     
     def build_l2_cpp(idx):
-        return FlatMCCPP(player_idx=idx, time_limit=0.2, epsilon=0.8, tau=2.0, model_level=2, use_neural_determinization=True)
+        return FlatMCCPP(player_idx=idx, time_limit=0.2, epsilon=0.2, tau=2.0, model_level=2, use_neural_determinization=True)
 
     def build_l1_cpp(idx):
-        return FlatMCCPP(player_idx=idx, time_limit=0.2, epsilon=0.8, tau=5.0, model_level=1, use_neural_determinization=False)
+        return FlatMCCPP(player_idx=idx, time_limit=0.2, epsilon=0.2, tau=5.0, model_level=1, use_neural_determinization=False)
 
     def build_b10(idx):
         return Baseline10(player_idx=idx)
