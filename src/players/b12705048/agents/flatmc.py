@@ -260,7 +260,7 @@ class FlatMC:
         #       S(c) = -10.0 * total bullheads in the row.
         #
         #   Case 3 (undercut): c < all row tails.
-        #       S(c) = -100.0 (heavy penalty).
+        #       S(c) = -5.0 * min_bulls (heavy penalty).
         # ================================================================
 
         # Compute delta (gap) from each card to each row tail
@@ -295,13 +295,9 @@ class FlatMC:
         S[cond2] = -(10.0 * target_rbulls[cond2])
 
         # ---- Case 3: Undercut (card lower than all row tails) ----
-        S[is_invalid] = -100.0
-
-        # ---- Static Priors B(c) ----
-        B = np.zeros(105, dtype=np.float32)
-        B[1:11] = 2.0
-        B[95:105] = 2.0
-        S += B
+        # The optimal move when undercutting is to take the row with the fewest bullheads.
+        min_bulls = np.min(orig_rbulls) if len(orig_rbulls) > 0 else 0
+        S[is_invalid] = -(5.0 * min_bulls)
 
         # ================================================================
         # PHASE 4: SUCCESSIVE HALVING + MONTE CARLO SIMULATION

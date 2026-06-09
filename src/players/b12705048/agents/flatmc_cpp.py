@@ -120,7 +120,7 @@ class FlatMCCPP:
         use_neural_determinization (bool): Whether to use Neural Determinization.
     """
 
-    def __init__(self, player_idx, epsilon=0.2, tau=1.0, time_limit=0.8, model_level=3, use_neural_determinization=True):
+    def __init__(self, player_idx, epsilon=0.2, tau=1.0, time_limit=0.9, model_level=3, use_neural_determinization=True):
         """
         Initialize the Neural Determinization Monte Carlo player.
 
@@ -288,11 +288,10 @@ class FlatMCCPP:
         #   Case 1 (safe placement): c fits into a row without filling it.
         #       S(c) = -min_deltas (distance to closest row tail below).
         #
-        #   Case 2 (row-filling): c would be the 6th card.
+        #   Case 2 (row filling): c falls into a row with 5 cards.
         #       S(c) = -10.0 * total bullheads in the row.
-        #
-        #   Case 3 (undercut): c < all row tails.
-        #       S(c) = -100.0 (heavy penalty).
+        #   Case 3 (undercut): c is lower than all row tails.
+        #       S(c) = -5.0 * min_bulls
         # ================================================================
 
         # Compute delta (gap) from each card to each row tail
@@ -327,13 +326,9 @@ class FlatMCCPP:
         S[cond2] = -(10.0 * target_rbulls[cond2])
 
         # ---- Case 3: Undercut (card lower than all row tails) ----
-        S[is_invalid] = -100.0
-
-        # ---- Static Priors B(c) ----
-        B = np.zeros(105, dtype=np.float32)
-        B[1:11] = 2.0
-        B[95:105] = 2.0
-        S += B
+        # The optimal move when undercutting is to take the row with the fewest bullheads.
+        min_bulls = np.min(orig_rbulls) if len(orig_rbulls) > 0 else 0
+        S[is_invalid] = -(5.0 * min_bulls)
 
         # ================================================================
         # PHASE 4: SUCCESSIVE HALVING + MONTE CARLO SIMULATION
