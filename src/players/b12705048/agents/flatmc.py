@@ -88,7 +88,7 @@ class FlatMC:
         model_level (int): The version of the weights to load.
     """
 
-    def __init__(self, player_idx, epsilon=0.2, tau=1.0, time_limit=0.8, model_level=3, use_neural_determinization=True):
+    def __init__(self, player_idx, epsilon=0.2, tau=1.0, time_limit=0.8, model_level=3, use_neural_determinization=True, eval_method="win_rate"):
         """
         Initialize the Neural Determinization Monte Carlo player.
 
@@ -108,6 +108,7 @@ class FlatMC:
         self.tau = tau
         self.model_level = model_level
         self.use_neural_determinization = use_neural_determinization
+        self.eval_method = eval_method
         self.debug = False
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
@@ -566,7 +567,22 @@ class FlatMC:
                         continue
 
                     my_pens = penalties[start_b:end_b, self.player_idx]
-                    stats_penalty[c] += np.sum(my_pens)
+                    
+                    if self.eval_method == "avg_penalty":
+                        stats_penalty[c] += np.sum(my_pens)
+                    elif self.eval_method == "win_rate":
+                        min_pens = np.min(penalties[start_b:end_b, :], axis=1)
+                        wins = np.sum(my_pens == min_pens)
+                        stats_penalty[c] -= wins  # Negative so lower is better
+                    elif self.eval_method == "avg_rank":
+                        ranks = np.sum(penalties[start_b:end_b, :] < my_pens[:, None], axis=1) + 1
+                        stats_penalty[c] += np.sum(ranks)
+                    elif self.eval_method == "cvar":
+                        # Conditional Value at Risk: sum of worst 25% outcomes
+                        sorted_pens = np.sort(my_pens)
+                        worst_25_idx = int(0.75 * len(sorted_pens))
+                        stats_penalty[c] += np.sum(sorted_pens[worst_25_idx:])
+                        
                     stats_visits[c] += sims_per_cand
 
             # ---- Successive Halving: eliminate worst half ----

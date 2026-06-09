@@ -41,6 +41,7 @@ void resolve_batch_with_sampling(
     float uniform_ratio,
     float minmax_ratio,
     float tau,
+    int eval_method,
     const int* orig_tails,          // [4]
     const int* orig_lengths,        // [4]
     const int* orig_rbulls,         // [4]
@@ -229,7 +230,7 @@ void resolve_batch_with_sampling(
                 rbulls[i] = orig_rbulls[i];
             }
             
-            int my_penalty = 0;
+            int player_penalties[4] = {0, 0, 0, 0};
             
             // Phase 4: Execute Game Rules (Turn by Turn)
             for (int t = 0; t < n_turns; ++t) {
@@ -281,13 +282,13 @@ void resolve_batch_with_sampling(
                         target_row = best_row;
                         
                         // Apply penalty and reset the chosen row.
-                        if (p == player_idx) my_penalty += rbulls[target_row];
+                        player_penalties[p] += rbulls[target_row];
                         lengths[target_row] = 1;
                         tails[target_row] = c;
                         rbulls[target_row] = bullhead_lookup[c];
                     } else if (lengths[target_row] == 5) {
                         // Rule 4: Row is full. If a card is the 6th in a row, the player takes the 5 existing cards.
-                        if (p == player_idx) my_penalty += rbulls[target_row];
+                        player_penalties[p] += rbulls[target_row];
                         lengths[target_row] = 1;
                         tails[target_row] = c;
                         rbulls[target_row] = bullhead_lookup[c];
@@ -299,8 +300,25 @@ void resolve_batch_with_sampling(
                     }
                 }
             }
-            // Aggregate penalties across simulations for this candidate card.
-            total_penalty += my_penalty;
+            // Aggregate penalties across simulations for this candidate card based on eval method.
+            int my_pen = player_penalties[player_idx];
+            if (eval_method == 0) { // Avg Penalty
+                total_penalty += my_pen;
+            } else if (eval_method == 1) { // Win Rate
+                int min_pen = player_penalties[0];
+                for(int i=1; i<4; i++) if(player_penalties[i] < min_pen) min_pen = player_penalties[i];
+                if (my_pen == min_pen) {
+                    total_penalty -= 1.0;
+                }
+            } else if (eval_method == 2) { // Avg Rank
+                int rank = 1;
+                for(int i=0; i<4; i++) {
+                    if (i != player_idx && player_penalties[i] < my_pen) rank++;
+                }
+                total_penalty += rank;
+            } else if (eval_method == 3) { // CVaR (Not strictly implemented, fallback to avg penalty)
+                total_penalty += my_pen;
+            }
         }
         
         // Output final simulation results.

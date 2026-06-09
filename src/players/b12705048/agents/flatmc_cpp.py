@@ -60,7 +60,7 @@ HAS_CPP = False
 try:
     fast_engine = ctypes.CDLL(lib_path)
     fast_engine.resolve_batch_with_sampling.argtypes = [
-        ctypes.c_int, ctypes.c_int, ctypes.c_float, ctypes.c_float, ctypes.c_float,
+        ctypes.c_int, ctypes.c_int, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_int,
         np.ctypeslib.ndpointer(dtype=np.int32, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(dtype=np.int32, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(dtype=np.int32, flags='C_CONTIGUOUS'),
@@ -120,7 +120,7 @@ class FlatMCCPP:
         use_neural_determinization (bool): Whether to use Neural Determinization.
     """
 
-    def __init__(self, player_idx, epsilon=0.2, tau=1.0, time_limit=0.9, model_level=3, use_neural_determinization=True):
+    def __init__(self, player_idx, epsilon=0.2, tau=1.0, time_limit=0.9, model_level=3, use_neural_determinization=True, eval_method="win_rate"):
         """
         Initialize the Neural Determinization Monte Carlo player.
 
@@ -140,6 +140,8 @@ class FlatMCCPP:
         self.tau = tau
         self.model_level = model_level
         self.use_neural_determinization = use_neural_determinization
+        self.eval_method = eval_method
+        self.eval_method_int = {"avg_penalty": 0, "win_rate": 1, "avg_rank": 2, "cvar": 3}.get(eval_method, 0)
         self.debug = False
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
@@ -379,6 +381,7 @@ class FlatMCCPP:
                         ctypes.c_float(0.0),
                         ctypes.c_float(1.0 - self.exploration_ratio),
                         ctypes.c_float(self.tau),
+                        ctypes.c_int(self.eval_method_int),
                         orig_tails_c, orig_lengths_c, orig_rbulls_c,
                         lookup_c, card_log_weights_c, S_c,
                         unseen_cards_c, len(unseen_cards_c),
