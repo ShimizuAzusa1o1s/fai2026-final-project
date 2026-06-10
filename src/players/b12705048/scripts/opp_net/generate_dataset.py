@@ -58,6 +58,22 @@ def generate_games(num_games=10, save_path=None, level=1):
     elif level == 2:
         from src.players.b12705048.agents.flatmc_cpp import FlatMCCPP
         players_pool = [FlatMCCPP(player_idx=i, time_limit=0.2, model_level=1) for i in range(4)]
+    elif level == 3:
+        import random
+        from src.players.b12705048.agents.flatmc_cpp import FlatMCCPP
+        from src.players.TA.public_baselines2 import Baseline10
+        
+        def build_l2_cpp(idx):
+            return FlatMCCPP(player_idx=idx, time_limit=0.8, epsilon=0.2, tau=2.0, model_level=2, use_neural_determinization=True)
+        def build_l1_cpp(idx):
+            return FlatMCCPP(player_idx=idx, time_limit=0.8, epsilon=0.2, tau=5.0, model_level=1, use_neural_determinization=True)
+        def build_b10(idx):
+            return Baseline10(player_idx=idx)
+        def build_flatmc_base(idx):
+            return FlatMCBaseline(player_idx=idx, time_limit=0.1)
+            
+        builders = [build_l2_cpp, build_l1_cpp, build_b10, build_flatmc_base]
+        weights = [0.4, 0.3, 0.2, 0.1]
     else:
         raise ValueError(f"Unknown level: {level}")
     
@@ -77,7 +93,12 @@ def generate_games(num_games=10, save_path=None, level=1):
     for game_id in tqdm(range(num_games)):
         players = []
         for i in range(4):
-            players.append(players_pool[i])
+            if level == 3:
+                import random
+                builder = random.choices(builders, weights=weights)[0]
+                players.append(builder(i))
+            else:
+                players.append(players_pool[i])
                 
         engine = Engine(cfg, players)
         # Note: the engine automatically resets and plays
@@ -103,7 +124,7 @@ def generate_games(num_games=10, save_path=None, level=1):
                 unseen = get_unseen_cards_at_round(total_cards, board, my_hand, history_matrix, r)
                 
                 # Input features
-                X = build_feature_vector(history_dict, r, p_idx, unseen, len(my_hand))
+                X = build_feature_vector(history_dict, r, p_idx, my_hand)
                 
                 # Capacities
                 capacities = get_gap_capacities(sorted_row_ends, unseen)
@@ -137,7 +158,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate ML dataset using self-play.")
     parser.add_argument("--games", type=int, default=10, help="Number of games to simulate.")
     parser.add_argument("--out", type=str, default=None, help="Output .npz file path.")
-    parser.add_argument("--level", type=int, choices=[1, 2], default=1, help="Level of training data to generate (1 or 2).")
+    parser.add_argument("--level", type=int, choices=[1, 2, 3], default=1, help="Level of training data to generate (1, 2, or 3).")
     
     args = parser.parse_args()
     

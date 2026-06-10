@@ -85,7 +85,8 @@ except Exception as e:
 from src.players.b12705048.core.constants import BULLHEAD_LOOKUP
 from src.players.b12705048.models.opp_net.model import TopologicalOpponentNet
 from src.players.b12705048.models.opp_net.feature_extractor import (
-    build_feature_vector,
+    build_feature_vector_v1,
+    build_feature_vector_v2,
     get_gap_capacities,
     get_topological_gaps,
     assign_card_to_bucket
@@ -149,8 +150,6 @@ class FlatMCCPP:
 
         # ---- Neural Network Setup ----
         self.device = torch.device('cpu')
-        self.model = TopologicalOpponentNet(input_dim=125).to(self.device)
-
         # Resolve path to weights (agents/ → models/)
         current_dir = os.path.dirname(os.path.abspath(__file__))
         parent_dir = os.path.dirname(current_dir)
@@ -159,11 +158,16 @@ class FlatMCCPP:
         else:
             model_path = os.path.join(parent_dir, "models", "opp_net", f"weights_l{self.model_level}.pth")
 
+        self.input_dim = 125
         if os.path.exists(model_path):
-            self.model.load_state_dict(
-                torch.load(model_path, map_location=self.device,
-                           weights_only=True)
-            )
+            state_dict = torch.load(model_path, map_location=self.device, weights_only=True)
+            if 'fc1.weight' in state_dict:
+                self.input_dim = state_dict['fc1.weight'].shape[1]
+            self.model = TopologicalOpponentNet(input_dim=self.input_dim).to(self.device)
+            self.model.load_state_dict(state_dict)
+        else:
+            self.model = TopologicalOpponentNet(input_dim=self.input_dim).to(self.device)
+            
         self.model.eval()
 
     # ------------------------------------------------------------------
@@ -249,11 +253,16 @@ class FlatMCCPP:
         card_log_weights = np.full((3, 105), -1e9, dtype=np.float32)
 
         if self.use_neural_determinization and isinstance(history, dict) and 'score_history' in history:
-            # Build the 125-dim feature vector for the neural network
-            X = build_feature_vector(
-                history, target_round, self.player_idx,
-                unseen_cards, len(hand)
-            )
+            # Build the feature vector dynamically based on model dimension
+            if self.input_dim == 125:
+                X = build_feature_vector_v1(
+                    history, target_round, self.player_idx,
+                    unseen_cards, len(hand)
+                )
+            else:
+                X = build_feature_vector_v2(
+                    history, target_round, self.player_idx, hand
+                )
             sorted_row_ends = get_topological_gaps(board)
             capacities = get_gap_capacities(sorted_row_ends, unseen_cards)
 
@@ -411,7 +420,7 @@ class FlatMCCPP:
                     
                     print(f"[Phase 6] Stage {stage+1}/{n_stages} complete.")
                     print(f"          Cumulative Visits: {clean_visits}")
-                    print(f"          Average Penalty:   {clean_scores}")
+                    print(f"          Metric ({self.eval_method}): {clean_scores}")
                     if len(candidates) > 1:
                         print(f"          Eliminating worst {len(candidates) - survivors} cards. Survivors: {candidates[:survivors]}")
                 

@@ -3,31 +3,20 @@ from src.players.b12705048.core.constants import BULLHEAD_LOOKUP
 
 def get_topological_gaps(board):
     """
-    Returns the 4 row ends sorted in ascending order.
-    These define the boundaries of the 5 topological gaps.
+    Legacy method for legacy targets
     """
     row_ends = np.array([row[-1] for row in board])
     return np.sort(row_ends)
 
 def assign_card_to_bucket(card, sorted_row_ends):
     """
-    Assigns a single card to one of the 5 topological buckets (0-4).
+    Legacy method for legacy targets
     """
-    # Bucket 0: cards < R1
-    if card < sorted_row_ends[0]:
-        return 0
-    # Bucket 1: between R1 and R2
-    elif card < sorted_row_ends[1]:
-        return 1
-    # Bucket 2: between R2 and R3
-    elif card < sorted_row_ends[2]:
-        return 2
-    # Bucket 3: between R3 and R4
-    elif card < sorted_row_ends[3]:
-        return 3
-    # Bucket 4: cards > R4
-    else:
-        return 4
+    if card < sorted_row_ends[0]: return 0
+    elif card < sorted_row_ends[1]: return 1
+    elif card < sorted_row_ends[2]: return 2
+    elif card < sorted_row_ends[3]: return 3
+    else: return 4
 
 def get_gap_capacities(sorted_row_ends, unseen_cards):
     """
@@ -39,56 +28,37 @@ def get_gap_capacities(sorted_row_ends, unseen_cards):
         capacities[bucket] += 1
     return capacities
 
-def extract_penalty_events(history, target_round):
+def build_feature_vector_v1(history, target_round, player_idx, unseen_cards, current_hand_size):
     """
-    Reconstructs the round to identify penalty triggers.
-    Returns a dictionary mapping player_idx to True if they triggered a penalty.
-    """
-    if target_round == 0:
-        return {i: False for i in range(4)}
-        
-    scores_before = np.array(history['score_history'][target_round - 1])
-    scores_after = np.array(history['score_history'][target_round])
-    score_deltas = scores_after - scores_before
-    
-    # If no one took a penalty, skip reconstruction
-    if np.all(score_deltas == 0):
-        return {i: False for i in range(4)}
-
-    return {i: (score_deltas[i] > 0) for i in range(4)}
-
-def build_feature_vector(history, target_round, player_idx, unseen_cards, current_hand_size):
-    """
-    Builds the 125-dimensional input vector for the neural network.
+    Legacy 125-dim feature extractor.
     """
     board = history['board_history'][target_round]
-    
-    # 1. Public Board State (12 dims)
     row_ends = [row[-1] for row in board]
     lengths = [len(row) for row in board]
     bullheads = [sum(BULLHEAD_LOOKUP[c] for c in row) for row in board]
+    board_features = row_ends + lengths + bullheads 
     
-    board_features = row_ends + lengths + bullheads # 12 dims
-    
-    # 2. Card Availability Mask (104 dims)
     card_mask = np.zeros(104, dtype=np.float32)
     for c in unseen_cards:
-        card_mask[c - 1] = 1.0 # 0-indexed internally
+        card_mask[c - 1] = 1.0 
         
-    # 3. Opponent State (9 dims: 3 opponents * 3 features)
     opp_features = []
     opp_indices = [i for i in range(4) if i != player_idx]
     
-    # Penalty events from the previous round
-    prev_penalties = extract_penalty_events(history, target_round - 1) if target_round > 0 else {i: False for i in range(4)}
+    prev_penalties = {i: False for i in range(4)}
+    if target_round > 0 and 'score_history' in history and len(history['score_history']) > target_round:
+        scores_before = history['score_history'][target_round - 1]
+        scores_after = history['score_history'][target_round]
+        for i in range(4):
+            prev_penalties[i] = (scores_after[i] - scores_before[i] > 0)
     
     current_scores = history['score_history'][target_round - 1] if target_round > 0 else [0, 0, 0, 0]
     
     for opp_idx in opp_indices:
         opp_features.extend([
-            current_hand_size,              # Hand size remaining
-            current_scores[opp_idx],        # Cumulative penalty
-            float(prev_penalties[opp_idx])  # Behavioral flag
+            current_hand_size,
+            current_scores[opp_idx],
+            float(prev_penalties[opp_idx])
         ])
         
     features = np.concatenate([
@@ -96,13 +66,93 @@ def build_feature_vector(history, target_round, player_idx, unseen_cards, curren
         card_mask,
         np.array(opp_features, dtype=np.float32)
     ])
+    return features
+
+def build_feature_vector_v2(history, target_round, player_idx, my_hand):
+    """
+    Builds the V2 334-dimensional input vector for the neural network.
+    """
+    board = history['board'] if 'board' in history else history['board_history'][target_round]
     
-    return features # 125 dims
+    # 1. Complete Card State (312 dims)
+    # ---------------------------------
+    my_hand_mask = np.zeros(104, dtype=np.float32)
+    for c in my_hand:
+        my_hand_mask[c - 1] = 1.0
+
+    board_mask = np.zeros(104, dtype=np.float32)
+    for row in board:
+        for c in row:
+            board_mask[c - 1] = 1.0
+
+    discard_mask = np.zeros(104, dtype=np.float32)
+    if 'history_matrix' in history:
+        for r in range(target_round):
+            if r < len(history['history_matrix']):
+                for p_idx in range(4):
+                    c = history['history_matrix'][r][p_idx]
+                    discard_mask[c - 1] = 1.0
+
+    # 2. Topologically Sorted Board State (12 dims)
+    # ---------------------------------------------
+    # Sort the 4 rows by their tail value in ascending order
+    sorted_board = sorted(board, key=lambda row: row[-1])
+    row_ends = [row[-1] for row in sorted_board]
+    lengths = [len(row) for row in sorted_board]
+    bullheads = [sum(BULLHEAD_LOOKUP[c] for c in row) for row in sorted_board]
+    
+    board_features = np.array(row_ends + lengths + bullheads, dtype=np.float32)
+
+    # 3. Opponent Behavioral State (9 dims)
+    # --------------------------------------
+    opp_features = []
+    opp_indices = [i for i in range(4) if i != player_idx]
+    
+    # Penalty calculation
+    prev_penalties = {i: False for i in range(4)}
+    if target_round > 0 and 'score_history' in history and len(history['score_history']) > target_round:
+        scores_before = history['score_history'][target_round - 1]
+        scores_after = history['score_history'][target_round]
+        for i in range(4):
+            prev_penalties[i] = (scores_after[i] - scores_before[i] > 0)
+            
+    current_scores = history['score_history'][target_round] if 'score_history' in history and len(history['score_history']) > target_round else [0, 0, 0, 0]
+    
+    for opp_idx in opp_indices:
+        norm_score = current_scores[opp_idx] / 100.0
+        
+        last_card = 0.0
+        if target_round > 0 and 'history_matrix' in history and len(history['history_matrix']) >= target_round:
+            last_card = history['history_matrix'][target_round - 1][opp_idx] / 104.0
+            
+        penalty_flag = 1.0 if prev_penalties[opp_idx] else 0.0
+        
+        opp_features.extend([norm_score, last_card, penalty_flag])
+        
+    opp_features = np.array(opp_features, dtype=np.float32)
+
+    # 4. Game Context (1 dim)
+    # -----------------------
+    round_feature = np.array([target_round / 10.0], dtype=np.float32)
+
+    # Combine all (312 + 12 + 9 + 1 = 334 dims)
+    features = np.concatenate([
+        my_hand_mask,
+        board_mask,
+        discard_mask,
+        board_features,
+        opp_features,
+        round_feature
+    ])
+    
+    return features
+
+# Alias default to V2
+build_feature_vector = build_feature_vector_v2
 
 def build_target_matrix(board, opp_hands):
     """
-    Builds the 3x5 target probability matrix given the opponents' actual hands.
-    opp_hands is a list of 3 lists (the hands of the 3 opponents).
+    Legacy method for legacy targets
     """
     sorted_row_ends = get_topological_gaps(board)
     targets = np.zeros((3, 5), dtype=np.float32)
@@ -113,7 +163,6 @@ def build_target_matrix(board, opp_hands):
         for card in hand:
             bucket = assign_card_to_bucket(card, sorted_row_ends)
             targets[i, bucket] += 1
-        # Normalize to probability
         targets[i] /= len(hand)
         
     return targets

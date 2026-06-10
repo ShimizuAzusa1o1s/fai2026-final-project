@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class TopologicalOpponentNet(nn.Module):
-    def __init__(self, input_dim=125, hidden_dim1=256, hidden_dim2=128):
+    def __init__(self, input_dim=334, hidden_dim1=256, hidden_dim2=128):
         super(TopologicalOpponentNet, self).__init__()
         
         self.fc1 = nn.Linear(input_dim, hidden_dim1)

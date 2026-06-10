@@ -35,7 +35,8 @@ def train_model(dataset_path=None, epochs=50, batch_size=256, lr=1e-3, level=1):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Training on device: {device}")
     
-    model = TopologicalOpponentNet(input_dim=125).to(device)
+    input_dim = X.shape[1]
+    model = TopologicalOpponentNet(input_dim=input_dim).to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
     best_val_loss = float('inf')
@@ -100,7 +101,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch", type=int, default=256)
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--level", type=int, choices=[1, 2], default=1)
+    parser.add_argument("--level", type=int, choices=[1, 2, 3], default=1)
     args = parser.parse_args()
     
     train_model(dataset_path=args.data, epochs=args.epochs, batch_size=args.batch, lr=args.lr, level=args.level)
