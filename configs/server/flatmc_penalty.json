@@ -3,16 +3,17 @@
     "server_port": 8888,
     "username": "ShimizuAzusa",
     "password": "LaoWang1015@@",
-    "label": "AlephL3Rapid",
+    "label": "AlphaMinimizer",
     "player": {
         "path": "src.players.b12705048.agents.flatmc",
         "class": "FlatMC",
         "args": {
+            "epsilon": 0.2,
+            "tau": 1.0,
             "time_limit": 0.9,
             "model_level": 3,
-            "use_neural_determinization": true,
-            "epsilon": 0.2,
-            "tau": 1.0
+            "use_neural_determinization": "True",
+            "eval_method": "avg_penalty"
         }
     }
 }
