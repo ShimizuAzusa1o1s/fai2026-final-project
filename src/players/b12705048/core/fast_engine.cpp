@@ -5,6 +5,8 @@
 #include <cmath>
 #include <omp.h>
 
+typedef unsigned __int128 bitboard;
+
 extern "C" {
 
 /**
@@ -96,11 +98,10 @@ void resolve_batch_with_sampling(
         // Run the allocated number of Monte Carlo simulations for this candidate.
         for (int b = 0; b < sims; ++b) {
             int opp_hands[3][10];
-            bool available[105];
+            bitboard available_mask = 0;
             
             // Reset the available deck to contain only the strictly unseen cards.
-            for(int i = 0; i < 105; i++) available[i] = false;
-            for(int i = 0; i < n_unseen; i++) available[unseen_cards[i]] = true;
+            for(int i = 0; i < n_unseen; i++) available_mask |= ((bitboard)1 << unseen_cards[i]);
             
             // Phase 1: Determinize Opponent Hands via Gumbel-Max trick
             for(int opp = 0; opp < 3; ++opp) {
@@ -110,17 +111,32 @@ void resolve_batch_with_sampling(
                 
                 // For each available card, sample a Gumbel-perturbed weight.
                 // This correctly samples from the NN categorical distribution without replacement.
-                for(int i = 0; i < 105; ++i) {
-                    if (available[i]) {
-                        float u = unif(rng);
-                        float gumbel = -std::log(-std::log(u));
-                        float w = card_log_weights[opp * 105 + i];
-                        if (w > -1e8f) { // Ignore cards explicitly ruled out by the NN
-                            scores[valid_cnt].card = i;
-                            scores[valid_cnt].score = w + gumbel;
-                            valid_cnt++;
-                        }
+                uint64_t low = (uint64_t)available_mask;
+                uint64_t high = (uint64_t)(available_mask >> 64);
+                
+                while(low) {
+                    int i = __builtin_ctzll(low);
+                    float u = unif(rng);
+                    float gumbel = -std::log(-std::log(u));
+                    float w = card_log_weights[opp * 105 + i];
+                    if (w > -1e8f) { // Ignore cards explicitly ruled out by the NN
+                        scores[valid_cnt].card = i;
+                        scores[valid_cnt].score = w + gumbel;
+                        valid_cnt++;
                     }
+                    low &= low - 1;
+                }
+                while(high) {
+                    int i = __builtin_ctzll(high) + 64;
+                    float u = unif(rng);
+                    float gumbel = -std::log(-std::log(u));
+                    float w = card_log_weights[opp * 105 + i];
+                    if (w > -1e8f) { // Ignore cards explicitly ruled out by the NN
+                        scores[valid_cnt].card = i;
+                        scores[valid_cnt].score = w + gumbel;
+                        valid_cnt++;
+                    }
+                    high &= high - 1;
                 }
                 
                 // Sort by the Gumbel-perturbed score to select the highest likelihood cards.
@@ -130,7 +146,7 @@ void resolve_batch_with_sampling(
                 
                 // Mark the selected n_turns cards as unavailable for subsequent opponents.
                 for(int t = 0; t < n_turns; ++t) {
-                    available[scores[t].card] = false;
+                    available_mask &= ~((bitboard)1 << scores[t].card);
                 }
                 
                 // Phase 2: Define Opponent Rollout Strategy (Play Order)

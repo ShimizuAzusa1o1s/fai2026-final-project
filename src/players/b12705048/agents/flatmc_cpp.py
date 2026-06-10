@@ -120,7 +120,7 @@ class FlatMCCPP:
         use_neural_determinization (bool): Whether to use Neural Determinization.
     """
 
-    def __init__(self, player_idx, epsilon=0.2, tau=1.0, time_limit=0.9, model_level=3, use_neural_determinization=True, eval_method="win_rate"):
+    def __init__(self, player_idx, epsilon=0.2, tau=1.0, time_limit=0.9, model_level=3, use_neural_determinization=True, eval_method="win_rate", debug=False):
         """
         Initialize the Neural Determinization Monte Carlo player.
 
@@ -142,7 +142,7 @@ class FlatMCCPP:
         self.use_neural_determinization = use_neural_determinization
         self.eval_method = eval_method
         self.eval_method_int = {"avg_penalty": 0, "win_rate": 1, "avg_rank": 2, "cvar": 3}.get(eval_method, 0)
-        self.debug = False
+        self.debug = debug
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000  # Simultaneous simulations per batch
         self.bullhead_lookup = BULLHEAD_LOOKUP

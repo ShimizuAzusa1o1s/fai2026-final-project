@@ -1,4 +1,5 @@
 import numpy as np
+from src.players.b12705048.core.constants import BULLHEAD_LOOKUP
 
 def get_topological_gaps(board):
     """
@@ -50,12 +51,10 @@ def extract_penalty_events(history, target_round):
     scores_after = np.array(history['score_history'][target_round])
     score_deltas = scores_after - scores_before
     
-    # If no one took a penalty, we can skip reconstruction
+    # If no one took a penalty, skip reconstruction
     if np.all(score_deltas == 0):
         return {i: False for i in range(4)}
-    
-    # If there are score deltas, we know they took penalties, so we just use score_deltas
-    # as the behavioral flag directly. Anyone with delta > 0 took a penalty!
+
     return {i: (score_deltas[i] > 0) for i in range(4)}
 
 def build_feature_vector(history, target_round, player_idx, unseen_cards, current_hand_size):
@@ -67,11 +66,6 @@ def build_feature_vector(history, target_round, player_idx, unseen_cards, curren
     # 1. Public Board State (12 dims)
     row_ends = [row[-1] for row in board]
     lengths = [len(row) for row in board]
-    bullheads = [sum(c % 10 == 5 or c % 10 == 0 or c % 11 == 0 for c in row) for row in board] # Approximation, actual rules used in engine
-    # Let's just use exact bullhead counts. Wait, bullhead_lookup is in constants.
-    
-    # We can just import BULLHEAD_LOOKUP
-    from src.players.b12705048.core.constants import BULLHEAD_LOOKUP
     bullheads = [sum(BULLHEAD_LOOKUP[c] for c in row) for row in board]
     
     board_features = row_ends + lengths + bullheads # 12 dims
@@ -85,7 +79,7 @@ def build_feature_vector(history, target_round, player_idx, unseen_cards, curren
     opp_features = []
     opp_indices = [i for i in range(4) if i != player_idx]
     
-    # Penalty events from the *previous* round
+    # Penalty events from the previous round
     prev_penalties = extract_penalty_events(history, target_round - 1) if target_round > 0 else {i: False for i in range(4)}
     
     current_scores = history['score_history'][target_round - 1] if target_round > 0 else [0, 0, 0, 0]

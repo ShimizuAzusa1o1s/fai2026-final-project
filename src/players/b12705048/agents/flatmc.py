@@ -10,10 +10,9 @@ mathematically grounded subsystems:
        within-bucket assumption), and the Gumbel-Max trick samples opponent
        hands without replacement from this distribution.
 
-    2. **Calibrated Safety-Score Rollout** — Instead of ad-hoc heuristic
-       scores, each card's safety S(c) is computed as the negative expected
-       penalty in bullheads, derived from an exact NN-weighted Poisson-Binomial
-       model of gap invasions, and an exact shifted-utility model for undercuts.
+    2. **Heuristic Safety-Score Rollout** — Each card's safety S(c) is
+       computed using a simple deterministic heuristic based on gap
+       distances, row-filling penalties, and undercut penalties.
 
     3. **Successive Halving** — The simulation budget is divided into
        ceil(log2(|hand|)) stages. After each stage, the worst-performing
@@ -22,14 +21,13 @@ mathematically grounded subsystems:
 
 Algorithm:
     1. Parse board state and history; compute visible/unseen card sets.
-    2. Neural inference → 3×5 bucket probabilities (with entropy-adaptive
-       ε-smoothing to regularize overconfident predictions).
-    3. Convert bucket probs → per-card log-weights via Bayes' rule.
-    4. Compute calibrated S(c) for all 104 cards (expected penalty model).
+    2. Neural inference for the 3 * 5 bucket probabilities.
+    3. Convert bucket probs to per-card log-weights via Bayes' rule.
+    4. Compute heuristic S(c) for all 104 cards.
     5. Successive Halving loop:
        a. Gumbel-Max sample opponent hands from neural weights.
-       b. Immediate-round Softmax(S/τ) determines turn-0 play for all
-          players; future turns use uniform-random permutation.
+       b. Play order is determined for all turns using an ε-greedy mixture
+          of Softmax(S/τ) and a Min-Max sequence per-simulation.
        c. Exact 6 Nimmt! simulation via vectorized SIMD batch engine.
        d. Aggregate penalties; after each stage, halve the candidate set.
     6. Return the card with the lowest average simulated penalty.
@@ -41,7 +39,7 @@ References:
 
 See Also:
     - ``flatmc_baseline.py`` — Uniform-random rollout baseline.
-    - ``analysis.md`` — Detailed algorithmic analysis and heuristic audit.
+    - ``flatmc_cpp.py`` — C++ image implementation for rapid test.
 """
 
 import time
@@ -69,7 +67,7 @@ class FlatMC:
         1. **Determinize** — Sample plausible opponent hands from a learned
            distribution (neural net + Gumbel-Max sampling).
         2. **Simulate** — Run batched 6 Nimmt! games with a Softmax rollout
-           policy informed by calibrated safety scores.
+           policy informed by heuristic safety scores.
         3. **Select** — Use Successive Halving to focus simulation budget on
            the most promising candidate cards.
 
@@ -80,12 +78,15 @@ class FlatMC:
             (exploration) instead of Min-Max sequence (exploitation).
         tau (float): Temperature for Softmax(S/τ) rollout distribution.
             Higher τ → more uniform; lower τ → more greedy.
+        model_level (int): The version of the weights to load.
+        use_neural_determinization (bool): Whether to use TopologicalOpponentNet.
+        eval_method (str): Evaluation metric for candidate selection.
+        debug (bool): Enable debug logging.
         total_cards (set[int]): The full card universe {1, …, 104}.
         batch_size (int): Number of parallel simulations per batch.
         bullhead_lookup (np.ndarray): O(1) bullhead penalty lookup table.
         device (torch.device): PyTorch device for NN inference.
         model (TopologicalOpponentNet): Loaded neural determinization model.
-        model_level (int): The version of the weights to load.
     """
 
     def __init__(self, player_idx, epsilon=0.2, tau=1.0, time_limit=0.8, model_level=3, use_neural_determinization=True, eval_method="win_rate"):
@@ -101,6 +102,7 @@ class FlatMC:
             time_limit: Simulation budget in seconds.
             model_level: Which level of weights to load (1 for weights_l1.pth, etc).
             use_neural_determinization: Whether to use TopologicalOpponentNet.
+            eval_method: Evaluation metric for stats aggregation ("win_rate", "avg_penalty", etc).
         """
         self.player_idx = player_idx
         self.time_limit = time_limit
@@ -119,6 +121,9 @@ class FlatMC:
         self.model = TopologicalOpponentNet(input_dim=125).to(self.device)
 
         # Resolve path to weights (agents/ → models/)
+        # NOTICE: Later for the submission, the OS library is not allowed to be
+        #   used due safety concern. Every import should be done under the path
+        #   ``src/players/b12705048/``. For now, it is OK to leave it as-is.
         current_dir = os.path.dirname(os.path.abspath(__file__))
         parent_dir = os.path.dirname(current_dir)
         if self.model_level == -1:
@@ -162,26 +167,21 @@ class FlatMC:
         # ================================================================
         if self.debug:
             print("[Phase 1] State Parsing...")
-        if isinstance(history, dict):
-            board = history.get('board', [])
-            target_round = history.get('round', 0)
-        else:
-            # Fallback for non-dict history (legacy interface)
-            board = history[-1]
-            target_round = 0
+
+        board = history.get('board', [])
+        target_round = history.get('round', 0)
 
         visible_cards = set()
         for row in board:
             visible_cards.update(row)
 
-        if isinstance(history, dict):
-            # Cards played in previous rounds are also visible
-            for past_round in history.get('history_matrix', []):
-                visible_cards.update(past_round)
-            # Cards from the initial board (before any rounds played)
-            if history.get('board_history'):
-                for row in history['board_history'][0]:
-                    visible_cards.update(row)
+        # Cards played in previous rounds are also visible
+        for past_round in history.get('history_matrix', []):
+            visible_cards.update(past_round)
+        # Cards from the initial board (before any rounds played)
+        if history.get('board_history'):
+            for row in history['board_history'][0]:
+                visible_cards.update(row)
 
         unseen_cards = list(self.total_cards - visible_cards - set(hand))
         n_turns = len(hand)
@@ -204,7 +204,7 @@ class FlatMC:
         # ================================================================
         # PHASE 2: NEURAL DETERMINIZATION SETUP
         # Use the TopologicalOpponentNet to estimate what cards each
-        # opponent is likely holding. The NN outputs a 3×5 probability
+        # opponent is likely holding. The NN outputs a 3 * 5 probability
         # distribution over 5 topological buckets (gaps between sorted
         # row tails). We convert these to per-card log-weights via:
         #   log P(card c | opponent) = log P(bucket_k) - log |bucket_k|
@@ -215,7 +215,7 @@ class FlatMC:
 
         card_log_weights = np.full((3, 105), -1e9, dtype=np.float32)
 
-        if self.use_neural_determinization and isinstance(history, dict) and 'score_history' in history:
+        if self.use_neural_determinization:
             # Build the 125-dim feature vector for the neural network
             X = build_feature_vector(
                 history, target_round, self.player_idx,
@@ -300,6 +300,9 @@ class FlatMC:
         min_bulls = np.min(orig_rbulls) if len(orig_rbulls) > 0 else 0
         S[is_invalid] = -(5.0 * min_bulls)
 
+        if self.debug:
+            print(f"[Phase 3 Output] Safety Scores: { {c: round(float(S[c]), 2) for c in hand} }")
+
         # ================================================================
         # PHASE 4: SUCCESSIVE HALVING + MONTE CARLO SIMULATION
         # Divide the time budget into ceil(log2(|hand|)) stages.
@@ -308,7 +311,6 @@ class FlatMC:
         # (Karnin et al. 2013: optimal fixed-budget bandit algorithm)
         # ================================================================
         if self.debug:
-            print(f"[Phase 3 Output] Safety Scores: { {c: round(float(S[c]), 2) for c in hand} }")
             print("[Phase 4] Starting Successive Halving...")
             
         candidates = list(hand)
@@ -379,7 +381,7 @@ class FlatMC:
                 # Softmax(S/τ). To prevent permutation duplication bugs,
                 # we mix the exploration policy per-simulation, not per-turn.
                 
-                # 1. Min-Max sequence (Exploration via Extremes)
+                # 1. Min-Max sequence (Exploitation)
                 opp_hands_sorted = np.sort(opp_hands_unsorted, axis=2)
                 choices = (np.random.rand(actual_batch_size, 3, n_turns) > 0.5).astype(np.int32)
                 min_counts = np.cumsum(1 - choices, axis=2)
@@ -392,7 +394,7 @@ class FlatMC:
                 selected_indices = np.where(choices == 0, left_indices, right_indices)
                 minmax_opp_cards = np.take_along_axis(opp_hands_sorted, selected_indices, axis=2)
 
-                # 2. Softmax-ordered sequence (Exploitation)
+                # 2. Softmax-ordered sequence (Exploration)
                 opp_scores = S[opp_hands_unsorted]  # (batch, 3, n_turns)
                 U_opp = np.random.uniform(1e-8, 1.0 - 1e-8, size=(actual_batch_size, 3, n_turns))
                 noisy_opp_scores = (opp_scores / self.tau) - np.log(-np.log(U_opp))
