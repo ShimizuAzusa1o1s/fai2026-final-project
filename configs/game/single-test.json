@@ -16,8 +16,8 @@
             {}
         ],
         [
-            "src.players.b12705048.agents.greedy",
-            "Maximizer",
+            "src.players.b12705048.agents.student",
+            "StudentAgent",
             {}
         ]
     ],

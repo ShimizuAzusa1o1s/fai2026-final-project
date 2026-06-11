@@ -3,7 +3,7 @@
     "server_port": 8888,
     "username": "ShimizuAzusa",
     "password": "LaoWang1015@@",
-    "label": "AlphaMinimizer",
+    "label": "Tragodia",
     "player": {
         "path": "src.players.b12705048.agents.flatmc",
         "class": "FlatMC",
@@ -13,7 +13,7 @@
             "time_limit": 0.9,
             "model_level": 3,
             "use_neural_determinization": "True",
-            "eval_method": "avg_penalty"
+            "eval_method": "avg_rank"
         }
     }
 }
