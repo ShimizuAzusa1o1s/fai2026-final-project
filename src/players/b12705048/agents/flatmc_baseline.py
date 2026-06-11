@@ -3,28 +3,25 @@ Flat Monte Carlo (1-Ply) Player Module — Vectorized SoA Variant.
 
 This module implements a high-throughput 1-ply Monte Carlo agent for 6 Nimmt!
 using a Structure of Arrays (SoA) architecture and NumPy SIMD batch execution.
-All candidates are evaluated simultaneously across ``batch_size`` parallel
-games in a single loop iteration, achieving ~10× higher simulation throughput
-than the sequential pure-Python ``flat_mc.py`` variant.
+All candidates are evaluated simultaneously across batch_size parallel
+games in a single loop iteration, achieving higher simulation throughput
+than the sequential pure-Python implementation.
 
 Algorithm:
-    1. Build SoA arrays for ``batch_size`` independent games.
+    1. Build SoA arrays for batch_size independent games.
     2. Randomly assign unseen cards to opponents via vectorized argsort.
     3. Assign candidate cards: each candidate occupies an equal share of
-       the batch (``sims_per_cand = batch_size // n_candidates``).
-    4. Simulate all ``n_turns`` tricks across all games simultaneously
+       the batch (sims_per_cand = batch_size // n_candidates).
+    4. Simulate all n_turns tricks across all games simultaneously
        using NumPy boolean indexing (no Python loops over games).
     5. Accumulate per-candidate penalties from the batch and restart.
 
 Characteristics:
-    - **Depth**: 1-ply (evaluates the immediate action only).
-    - **Rollout Policy**: Pure uniform random for all players.
-    - **SIMD Batching**: All games and candidates evaluated in one NumPy call
+    - Depth: 1-ply (evaluates the immediate action only).
+    - Rollout Policy: Pure uniform random for all players.
+    - SIMD Batching: All games and candidates evaluated in one NumPy call
       per trick, achieving ~5,000 parallel simulations per wall-clock second.
-    - **Time Management**: Repeats batches until the wall-clock budget expires.
-
-See Also:
-    ``greedy.py`` — Simpler deterministic baseline (no simulation).
+    - Time Management: Repeats batches until the wall-clock budget expires.
 """
 
 import time
@@ -37,14 +34,14 @@ class FlatMCBaseline:
     """
     Vectorized 1-ply Monte Carlo agent for 6 Nimmt!.
 
-    Evaluates all candidate cards simultaneously across ``batch_size`` parallel
-    game simulations via NumPy SoA arrays.  Exact 6 Nimmt! placement rules
+    Evaluates all candidate cards simultaneously across batch_size parallel
+    game simulations via NumPy SoA arrays. Exact 6 Nimmt! placement rules
     are enforced using vectorized boolean masks — no Python loops over
     individual games.
 
     Attributes:
         player_idx (int): This agent's seat index (0–3).
-        time_limit (float): Wall-clock budget in seconds per ``action()`` call.
+        time_limit (float): Wall-clock budget in seconds per action() call.
         total_cards (set[int]): The full card universe {1, ..., 104}.
         batch_size (int): Number of simultaneous simulations per batch.
         bullhead_lookup (np.ndarray): O(1) bullhead penalty lookup array.
@@ -82,22 +79,23 @@ class FlatMCBaseline:
         """
         start_time = time.perf_counter()
 
-        # ---- Phase 1: State Parsing ----
-        if isinstance(history, dict):
-            board = history.get('board', [])
-        else:
-            board = history[-1]
+        # ================================================================
+        # PHASE 1: STATE PARSING
+        # ================================================================
+        # Extract the current board state and compute which cards are
+        # visible (on board or played in past rounds) vs. unseen.
+        # ================================================================
+        board = history.get('board', [])
 
         visible_cards = set()
         for row in board:
             visible_cards.update(row)
 
-        if isinstance(history, dict):
-            for past_round in history.get('history_matrix', []):
-                visible_cards.update(past_round)
-            if history.get('board_history'):
-                for row in history['board_history'][0]:
-                    visible_cards.update(row)
+        for past_round in history.get('history_matrix', []):
+            visible_cards.update(past_round)
+        if history.get('board_history'):
+            for row in history['board_history'][0]:
+                visible_cards.update(row)
 
         unseen_cards = list(self.total_cards - visible_cards - set(hand))
         n_turns = len(hand)
@@ -105,9 +103,16 @@ class FlatMCBaseline:
         stats_penalty = {c: 0.0 for c in hand}
         stats_visits = {c: 0 for c in hand}
 
+        # Snapshot of the current board in SoA (Structure of Arrays) form:
+        #   orig_tails[r]   = last card in row r
+        #   orig_lengths[r] = number of cards in row r
+        #   orig_rbulls[r]  = total bullhead penalty of row r
         orig_tails = np.array([row[-1] for row in board], dtype=np.int32)
         orig_lengths = np.array([len(row) for row in board], dtype=np.int32)
-        orig_rbulls = np.array([sum(self.bullhead_lookup[c] for c in row) for row in board], dtype=np.int32)
+        orig_rbulls = np.array(
+            [sum(self.bullhead_lookup[c] for c in row) for row in board], 
+            dtype=np.int32
+        )
 
         unseen_mask_base = np.zeros(105, dtype=bool)
         unseen_mask_base[unseen_cards] = True
@@ -121,25 +126,29 @@ class FlatMCBaseline:
             if actual_batch_size == 0:
                 break
 
-            # ---- Phase 2: Batch Initialization & Deal ----
-            # Initialize SoA arrays for the batch
+            # ================================================================
+            # PHASE 2: BATCH INITIALIZATION & DEAL
+            # ================================================================
+            # Initialize SoA arrays for the batch, deal hands randomly to
+            # opponents from unseen cards without replacement, and assign
+            # our candidate cards across batch slices.
+            # ================================================================
+            # Create SoA arrays for actual_batch_size parallel games
             tails = np.tile(orig_tails, (actual_batch_size, 1))
             lengths = np.tile(orig_lengths, (actual_batch_size, 1))
             rbulls = np.tile(orig_rbulls, (actual_batch_size, 1))
             penalties = np.zeros((actual_batch_size, 4), dtype=np.int32)
 
             # Deal hands
-            # Assign random weights to valid unseen cards, take argsort to sample without replacement
+            # Assign random weights to valid unseen cards
             rand_weights = np.random.rand(actual_batch_size, 105)
+
             # Make seen cards invalid by setting their weight to -1
             unseen_mask = np.tile(unseen_mask_base, (actual_batch_size, 1))
             rand_weights[~unseen_mask] = -1.0
 
             perm = np.argsort(-rand_weights, axis=1)
-
             opp_indices = [i for i in range(4) if i != self.player_idx]
-
-            # hands_array shape: (actual_batch_size, 4_players, n_turns)
             hands_array = np.zeros((actual_batch_size, 4, n_turns), dtype=np.int32)
             hands_array[:, opp_indices[0], :] = perm[:, 0:n_turns]
             hands_array[:, opp_indices[1], :] = perm[:, n_turns:2*n_turns]
@@ -166,7 +175,20 @@ class FlatMCBaseline:
 
                 c_idx += 1
 
-            # ---- Phase 3: SIMD Batch Simulation Loop ----
+            # ================================================================
+            # PHASE 3: SIMD BATCH SIMULATION
+            # ================================================================
+            # Simulate all n_turns tricks for all batch games in
+            # parallel using vectorized NumPy operations. This
+            # implements exact 6 Nimmt! placement rules:
+            #   - Sort the 4 played cards (lowest resolves first).
+            #   - Each card goes to the row with the closest tail
+            #     below it (argmax of valid tails).
+            #   - If the card is lower than all tails: take the
+            #     cheapest row (lexicographic: score, length, index).
+            #   - If placing the 6th card: take the row's penalty,
+            #     row resets to just this card.
+            # ================================================================
             for t in range(n_turns):
                 played_cards = hands_array[:, :, t]
 
@@ -196,7 +218,8 @@ class FlatMCBaseline:
                     target_lengths = lengths[b_idx, target_rows]
                     target_bullheads = rbulls[b_idx, target_rows]
 
-                    # Penalty occurs if invalid, or if placing the 6th card (length == 5)
+                    # Penalty occurs if invalid, 
+                    # or if placing the 6th card (length == 5)
                     penalty_condition = invalid_mask | (target_lengths == 5)
                     normal_cond = ~penalty_condition
 
@@ -224,7 +247,12 @@ class FlatMCBaseline:
                         tails[b_nc, target_rows[nc]] = current_cards[nc]
                         rbulls[b_nc, target_rows[nc]] += card_bulls[nc]
 
-            # ---- Phase 4: Stat Aggregation ----
+            # ================================================================
+            # PHASE 4: STAT AGGREGATION
+            # ================================================================
+            # Aggregate the simulated penalties for each candidate card from
+            # the batch slices to calculate average performance.
+            # ================================================================
             c_idx = 0
             for c in candidates:
                 start_b = c_idx * sims_per_cand

@@ -1,3 +1,6 @@
+// Compilation command:
+//     g++ -O3 -shared -fPIC -fopenmp -o fast_engine.so fast_engine.cpp
+
 #include <iostream>
 #include <algorithm>
 #include <vector>
@@ -103,7 +106,12 @@ void resolve_batch_with_sampling(
             // Reset the available deck to contain only the strictly unseen cards.
             for(int i = 0; i < n_unseen; i++) available_mask |= ((bitboard)1 << unseen_cards[i]);
             
-            // Phase 1: Determinize Opponent Hands via Gumbel-Max trick
+            // ================================================================
+            // PHASE 4B: NEURAL DETERMINIZATION VIA GUMBEL-MAX
+            // ================================================================
+            // Sample opponent hands without replacement using the Gumbel-Max
+            // trick to predict plausible opponent cards.
+            // ================================================================
             for(int opp = 0; opp < 3; ++opp) {
                 struct CardScore { int card; float score; };
                 CardScore scores[105];
@@ -149,7 +157,12 @@ void resolve_batch_with_sampling(
                     available_mask &= ~((bitboard)1 << scores[t].card);
                 }
                 
-                // Phase 2: Define Opponent Rollout Strategy (Play Order)
+                // ================================================================
+                // PHASE 4C: OPPONENT PLAY-ORDER (SOFTMAX POLICY)
+                // ================================================================
+                // Determine the play order for each opponent's hand using
+                // Softmax(S/τ) for exploration or Min-Max sequence for exploitation.
+                // ================================================================
                 float policy_u = unif(rng);
                 struct CardPlayScore { int card; float score; };
                 CardPlayScore play_scores[10];
@@ -195,8 +208,12 @@ void resolve_batch_with_sampling(
                 }
             }
             
-            // Phase 3: Agent's Own Rollout Strategy
-            // The candidate card is locked in as the first play. The remainder uses the same policies.
+            // ================================================================
+            // PHASE 4D: ASSIGN OUR CANDIDATE CARDS
+            // ================================================================
+            // Lock in the candidate card as our first play, then choose the
+            // rollout sequence for the remaining cards in hand.
+            // ================================================================
             int my_play[10];
             my_play[0] = cand_card;
             
@@ -248,7 +265,12 @@ void resolve_batch_with_sampling(
             
             int player_penalties[4] = {0, 0, 0, 0};
             
-            // Phase 4: Execute Game Rules (Turn by Turn)
+            // ================================================================
+            // PHASE 5: SIMD BATCH SIMULATION
+            // ================================================================
+            // Simulate all n_turns tricks for the game native array-wise.
+            // Implements exact 6 Nimmt! placement rules.
+            // ================================================================
             for (int t = 0; t < n_turns; ++t) {
                 struct PlayedCard { int card; int player; };
                 PlayedCard turn_cards[4];
@@ -316,7 +338,13 @@ void resolve_batch_with_sampling(
                     }
                 }
             }
-            // Aggregate penalties across simulations for this candidate card based on eval method.
+            
+            // ================================================================
+            // PHASE 6: STAT AGGREGATION
+            // ================================================================
+            // Aggregate penalties across simulations for this candidate card
+            // based on the configured evaluation method.
+            // ================================================================
             int my_pen = player_penalties[player_idx];
             if (eval_method == 0) { // Avg Penalty
                 total_penalty += my_pen;

@@ -31,21 +31,53 @@ try:
     fast_engine.resolve_batch_with_sampling.restype = None
     HAS_CPP = True
 except Exception as e:
-    print(f"Warning: Failed to load fast_engine.so: {e}. Falling back to NumPy SIMD.")
+    print(f"Warning: Failed to load fast_engine.so: {e}")
+    print("OracleFlatMC will raise RuntimeError on action().")
 
 from src.players.b12705048.core.constants import BULLHEAD_LOOKUP
 
 class OracleFlatMC:
     """
     Perfect Information Monte Carlo Teacher.
+
     This agent requires the exact true hands of the opponents to be passed in.
     It uses the fast C++ engine to find the true optimal action for distillation.
+
+    Attributes:
+        player_idx (int): This agent's seat index (0-3).
+        time_limit (float): Wall-clock simulation budget in seconds per decision.
+        epsilon (float): Probability (or fraction of simulations/players) using the
+            Softmax-safety rollout policy (exploration) instead of the Min-Max sequence
+            rollout policy (exploitation).
+        tau (float): Temperature parameter for the Softmax(S/τ) rollout distribution.
+            Higher τ makes choices more uniform; lower τ makes them more greedy.
+        eval_method (str): Evaluation metric for stats aggregation (win_rate/avg_penalty/avg_rank/cvar).
+        eval_method_int (int): Integer encoding of the evaluation metric for the C++ library.
+        debug (bool): Enable debug logging.
+        total_cards (set[int]): The full card universe {1, ..., 104}.
+        batch_size (int): Number of parallel simulations per batch.
+        bullhead_lookup (np.ndarray): O(1) bullhead penalty lookup table.
     """
 
     def __init__(self, player_idx, epsilon=0.2, tau=1.0, time_limit=0.9, eval_method="win_rate", debug=False):
+        """
+        Initialize the Oracle Flat Monte Carlo player.
+
+        Args:
+            player_idx: The player's seat index in the game (0-3).
+            epsilon: Probability (or fraction of simulations/players) using 
+                the Softmax-safety rollout policy (exploration) instead of 
+                the Min-Max sequence rollout policy (exploitation). 
+                Acts as exploration noise.
+            tau: Temperature parameter for the Softmax(S/τ) rollout distribution. Controls
+                how strongly the safety score biases card selection.
+            time_limit: Simulation budget in seconds.
+            eval_method: Evaluation metric for stats aggregation (win_rate/avg_penalty/avg_rank/cvar).
+            debug: Enable debug logging.
+        """
         self.player_idx = player_idx
         self.time_limit = time_limit
-        self.exploration_ratio = epsilon
+        self.epsilon = epsilon
         self.tau = tau
         self.eval_method = eval_method
         self.eval_method_int = {"avg_penalty": 0, "win_rate": 1, "avg_rank": 2, "cvar": 3}.get(eval_method, 0)
@@ -163,7 +195,7 @@ class OracleFlatMC:
                     fast_engine.resolve_batch_with_sampling(
                         n_turns, self.player_idx,
                         ctypes.c_float(0.0),
-                        ctypes.c_float(1.0 - self.exploration_ratio),
+                        ctypes.c_float(1.0 - self.epsilon),
                         ctypes.c_float(self.tau),
                         ctypes.c_int(self.eval_method_int),
                         orig_tails_c, orig_lengths_c, orig_rbulls_c,

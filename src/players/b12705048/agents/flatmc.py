@@ -1,20 +1,20 @@
 """
-Successive Halving Monte Carlo (1-Ply) Player Module — Neural Determinization Variant.
+Flat Monte Carlo (1-Ply) Player Module — Opponent Modeling Variant.
 
 This module implements the FlatMC agent for 6 Nimmt!, combining three
 mathematically grounded subsystems:
 
-    1. **Neural Determinization** — A TopologicalOpponentNet predicts which
+    1. Neural Determinization — A TopologicalOpponentNet predicts which
        topological bucket (gap between row tails) each opponent's cards fall
        into. Per-card log-weights are derived via Bayes' rule (uniform-
        within-bucket assumption), and the Gumbel-Max trick samples opponent
        hands without replacement from this distribution.
 
-    2. **Heuristic Safety-Score Rollout** — Each card's safety S(c) is
+    2. Heuristic Safety-Score Rollout — Each card's safety S(c) is
        computed using a simple deterministic heuristic based on gap
        distances, row-filling penalties, and undercut penalties.
 
-    3. **Successive Halving** — The simulation budget is divided into
+    3. Successive Halving — The simulation budget is divided into
        ceil(log2(|hand|)) stages. After each stage, the worst-performing
        half of candidate cards is eliminated. This is provably optimal for
        fixed-budget pure-exploration multi-armed bandits (Karnin et al. 2013).
@@ -35,11 +35,10 @@ Algorithm:
 References:
     - Gumbel-Max trick: Yellott (1977), Kool et al. (2019)
     - Successive Halving: Karnin, Koren, Somekh (2013)
-    - 6 Nimmt! rules: see engine.py
 
 See Also:
-    - ``flatmc_baseline.py`` — Uniform-random rollout baseline.
-    - ``flatmc_cpp.py`` — C++ image implementation for rapid test.
+    - flatmc_baseline.py — Uniform-random rollout baseline.
+    - flatmc_cpp.py — C++ image implementation for rapid test.
 """
 
 import time
@@ -64,49 +63,56 @@ class FlatMC:
     allocation and a Neural Network for opponent hand determinization.
 
     The agent's decision pipeline has three stages:
-        1. **Determinize** — Sample plausible opponent hands from a learned
+        1. Determinize — Sample plausible opponent hands from a learned
            distribution (neural net + Gumbel-Max sampling).
-        2. **Simulate** — Run batched 6 Nimmt! games with a Softmax rollout
+        2. Simulate — Run batched 6 Nimmt! games with a Softmax rollout
            policy informed by heuristic safety scores.
-        3. **Select** — Use Successive Halving to focus simulation budget on
+        3. Select — Use Successive Halving to focus simulation budget on
            the most promising candidate cards.
 
     Attributes:
         player_idx (int): This agent's seat index (0-3).
-        time_limit (float): Wall-clock simulation budget in seconds.
-        exploration_ratio (float): Fraction of rollout turns using Softmax-safety
-            (exploration) instead of Min-Max sequence (exploitation).
-        tau (float): Temperature for Softmax(S/τ) rollout distribution.
-            Higher τ → more uniform; lower τ → more greedy.
-        model_level (int): The version of the weights to load.
-        use_neural_determinization (bool): Whether to use TopologicalOpponentNet.
-        eval_method (str): Evaluation metric for candidate selection.
+        time_limit (float): Wall-clock simulation budget in seconds per decision.
+        epsilon (float): Probability (or fraction of simulations/players) using the
+            Softmax-safety rollout policy (exploration) instead of the Min-Max sequence
+            rollout policy (exploitation).
+        tau (float): Temperature parameter for the Softmax(S/τ) rollout distribution.
+            Higher τ makes choices more uniform; lower τ makes them more greedy.
+        model_level (int): Which level of weights to load.
+        use_neural_determinization (bool): Whether to use TopologicalOpponentNet to model
+            and sample opponent hands instead of uniform-random sampling.
+        eval_method (str): Evaluation metric for stats aggregation (avg_penalty/avg_rank).
         debug (bool): Enable debug logging.
-        total_cards (set[int]): The full card universe {1, …, 104}.
+        total_cards (set[int]): The full card universe {1, ..., 104}.
         batch_size (int): Number of parallel simulations per batch.
         bullhead_lookup (np.ndarray): O(1) bullhead penalty lookup table.
         device (torch.device): PyTorch device for NN inference.
+        input_dim (int): Input feature dimension for the neural model.
         model (TopologicalOpponentNet): Loaded neural determinization model.
     """
 
-    def __init__(self, player_idx, epsilon=0.2, tau=1.0, time_limit=0.8, model_level=3, use_neural_determinization=True, eval_method="win_rate"):
+    def __init__(
+        self, player_idx, epsilon=0.2, tau=1.0, time_limit=0.9, model_level=3, 
+        use_neural_determinization=True, eval_method="avg_rank"):
         """
         Initialize the Neural Determinization Monte Carlo player.
 
         Args:
             player_idx: The player's seat index in the game (0-3).
-            epsilon: Fraction of rollout turns using Softmax-safety
-                heuristic instead of Min-Max sequence. Acts as exploration noise.
-            tau: Temperature for the Softmax rollout distribution. Controls
+            epsilon: Probability (or fraction of simulations/players) using 
+                the Softmax-safety rollout policy (exploration) instead of 
+                the Min-Max sequence rollout policy (exploitation). 
+                Acts as exploration noise.
+            tau: Temperature parameter for the Softmax(S/τ) rollout distribution. Controls
                 how strongly the safety score biases card selection.
             time_limit: Simulation budget in seconds.
-            model_level: Which level of weights to load (1 for weights_l1.pth, etc).
+            model_level: Which level of weights to load.
             use_neural_determinization: Whether to use TopologicalOpponentNet.
-            eval_method: Evaluation metric for stats aggregation ("win_rate", "avg_penalty", etc).
+            eval_method: Evaluation metric for stats aggregation (avg_penalty/avg_rank).
         """
         self.player_idx = player_idx
         self.time_limit = time_limit
-        self.exploration_ratio = epsilon
+        self.epsilon = epsilon
         self.tau = tau
         self.model_level = model_level
         self.use_neural_determinization = use_neural_determinization
@@ -122,24 +128,15 @@ class FlatMC:
         # Resolve path to weights (agents/ -> models/)
         current_dir = os.path.dirname(os.path.abspath(__file__))
         parent_dir = os.path.dirname(current_dir)
-        if self.model_level == -1:
-            model_path = os.path.join(parent_dir, "models", "opp_net", "legacy_model.pt")
-        else:
-            model_path = os.path.join(parent_dir, "models", "opp_net", f"weights_l{self.model_level}.pth")
+        model_path = os.path.join(parent_dir, "models", "opp_net", f"weights_l{self.model_level}.pth")
 
         self.input_dim = 125
+        self.model = TopologicalOpponentNet(input_dim=self.input_dim).to(self.device)
         if os.path.exists(model_path):
             state_dict = torch.load(model_path, map_location=self.device, weights_only=True)
-            self.model = TopologicalOpponentNet(input_dim=self.input_dim).to(self.device)
             self.model.load_state_dict(state_dict)
-        else:
-            self.model = TopologicalOpponentNet(input_dim=self.input_dim).to(self.device)
             
         self.model.eval()
-
-    # ------------------------------------------------------------------
-    #  Core decision method
-    # ------------------------------------------------------------------
 
     def action(self, hand, history):
         """
@@ -161,6 +158,7 @@ class FlatMC:
 
         # ================================================================
         # PHASE 1: STATE PARSING
+        # ================================================================
         # Extract the current board state and compute which cards are
         # visible (on board or played in past rounds) vs. unseen.
         # ================================================================
@@ -174,10 +172,8 @@ class FlatMC:
         for row in board:
             visible_cards.update(row)
 
-        # Cards played in previous rounds are also visible
         for past_round in history.get('history_matrix', []):
             visible_cards.update(past_round)
-        # Cards from the initial board (before any rounds played)
         if history.get('board_history'):
             for row in history['board_history'][0]:
                 visible_cards.update(row)
@@ -185,7 +181,6 @@ class FlatMC:
         unseen_cards = list(self.total_cards - visible_cards - set(hand))
         n_turns = len(hand)
 
-        # Running statistics for each candidate card
         stats_penalty = {c: 0.0 for c in hand}
         stats_visits = {c: 0 for c in hand}
 
@@ -202,6 +197,7 @@ class FlatMC:
 
         # ================================================================
         # PHASE 2: NEURAL DETERMINIZATION SETUP
+        # ================================================================
         # Use the TopologicalOpponentNet to estimate what cards each
         # opponent is likely holding. The NN outputs a 3 * 5 probability
         # distribution over 5 topological buckets (gaps between sorted
@@ -230,7 +226,7 @@ class FlatMC:
                 ).unsqueeze(0).to(self.device)
                 nn_probs = self.model(
                     x_t, gap_capacities=c_t
-                ).squeeze(0).cpu().numpy()  # Shape: (3, 5)
+                ).squeeze(0).cpu().numpy()
 
             probs = nn_probs
             log_probs = np.log(probs + 1e-10)
@@ -248,6 +244,7 @@ class FlatMC:
 
         # ================================================================
         # PHASE 3: HEURISTIC SAFETY SCORE S(c)
+        # ================================================================
         # Compute a simple deterministic safety score S(c) for every card
         # value (1–104) based on gap distances and row penalties.
         #
@@ -267,8 +264,8 @@ class FlatMC:
         deltas = np.arange(105)[:, None] - orig_tails[None, :]
         valid_mask = deltas > 0
 
-        # For each card, find the row it would be placed on (smallest
-        # positive delta = closest row tail below the card)
+        # For each card, find the row it would be placed on 
+        # (smallest positive delta = closest row tail below the card)
         masked_deltas = np.where(valid_mask, deltas, np.inf)
         min_deltas = np.min(masked_deltas, axis=1)
         target_rows = np.argmin(masked_deltas, axis=1)
@@ -281,19 +278,15 @@ class FlatMC:
         n_unseen = len(unseen_cards)
 
         S = np.zeros(105, dtype=np.float32)
-
-        # ---- Precompute NN probabilities for exact safety evaluations ----
-        W = np.exp(card_log_weights)  # Shape (3, 105)
-
-        # ---- Case 1: Safe placement (row not yet full) ----
+        # Precompute NN probabilities for exact safety evaluations
+        W = np.exp(card_log_weights)
+        # Case 1: Safe placement (row not yet full)
         cond1 = (~is_invalid) & (target_lengths < 5)
         S[cond1] = -min_deltas[cond1]
-
-        # ---- Case 2: Row-filling placement (row already has 5 cards) ----
+        # Case 2: Row-filling placement (row already has 5 cards)
         cond2 = (~is_invalid) & (target_lengths == 5)
         S[cond2] = -(10.0 * target_rbulls[cond2])
-
-        # ---- Case 3: Undercut (card lower than all row tails) ----
+        # Case 3: Undercut (card lower than all row tails)
         # The optimal move when undercutting is to take the row with the fewest bullheads.
         min_bulls = np.min(orig_rbulls) if len(orig_rbulls) > 0 else 0
         S[is_invalid] = -(5.0 * min_bulls)
@@ -303,6 +296,7 @@ class FlatMC:
 
         # ================================================================
         # PHASE 4: SUCCESSIVE HALVING + MONTE CARLO SIMULATION
+        # ================================================================
         # Divide the time budget into ceil(log2(|hand|)) stages.
         # Within each stage, run batched simulations for all surviving
         # candidates. After each stage, eliminate the worst half.
@@ -329,7 +323,9 @@ class FlatMC:
                 if actual_batch_size == 0:
                     break
 
-                # ---- Phase 4a: Batch Initialization ----
+                # ================================================================
+                # PHASE 4A: BATCH INITIALIZATION
+                # ================================================================
                 # Create SoA arrays for actual_batch_size parallel games
                 tails = np.tile(orig_tails, (actual_batch_size, 1))
                 lengths = np.tile(orig_lengths, (actual_batch_size, 1))
@@ -338,7 +334,9 @@ class FlatMC:
 
                 opp_indices = [i for i in range(4) if i != self.player_idx]
 
-                # ---- Phase 4b: Neural Determinization via Gumbel-Max ----
+                # ================================================================
+                # PHASE 4B: NEURAL DETERMINIZATION VIA GUMBEL-MAX
+                # ================================================================
                 # Sample opponent hands without replacement using the
                 # Gumbel-Max trick (Yellott 1977, Kool et al. 2019):
                 #   G_i = log_w_i - log(-log(U_i)),  U_i ~ Uniform(0,1)
@@ -374,7 +372,9 @@ class FlatMC:
                         available_mask, chosen_cards, False, axis=1
                     )
 
-                # ---- Phase 4c: Opponent Play-Order (Softmax Policy) ----
+                # ================================================================
+                # PHASE 4C: OPPONENT PLAY-ORDER (SOFTMAX POLICY)
+                # ================================================================
                 # Determine the play order for each opponent's hand using
                 # Softmax(S/τ). To prevent permutation duplication bugs,
                 # we mix the exploration policy per-simulation, not per-turn.
@@ -400,7 +400,7 @@ class FlatMC:
                 softmax_opp_cards = np.take_along_axis(opp_hands_unsorted, sort_idx_opp, axis=2)
 
                 # 3. Per-simulation exploration mask
-                eps_mask = np.random.rand(actual_batch_size, 3, 1) < self.exploration_ratio
+                eps_mask = np.random.rand(actual_batch_size, 3, 1) < self.epsilon
                 final_opp_cards = np.where(eps_mask, softmax_opp_cards, minmax_opp_cards)
 
                 # Assemble the full hands_array for all 4 players
@@ -411,7 +411,9 @@ class FlatMC:
                 hands_array[:, opp_indices[1], :] = final_opp_cards[:, 1, :]
                 hands_array[:, opp_indices[2], :] = final_opp_cards[:, 2, :]
 
-                # ---- Phase 4d: Assign Our Candidate Cards ----
+                # ================================================================
+                # PHASE 4D: ASSIGN OUR CANDIDATE CARDS
+                # ================================================================
                 # For each candidate c, a slice of the batch is dedicated
                 # to simulations where we play c on turn 0, then play our
                 # remaining cards using the same per-simulation Softmax/Uniform policy.
@@ -463,15 +465,16 @@ class FlatMC:
                         minmax_my = np.take_along_axis(my_hands_sorted, sel_my, axis=1)
                         
                         # Per-simulation exploration mask (broadcast over n_rem)
-                        eps_mask_my = np.random.rand(sims_per_cand, 1) < self.exploration_ratio
+                        eps_mask_my = np.random.rand(sims_per_cand, 1) < self.epsilon
                         final_my = np.where(eps_mask_my, softmax_my, minmax_my)
 
                         hands_array[
                             start_b:end_b, self.player_idx, 1:
                         ] = final_my
 
-                # ========================================================
+                # ================================================================
                 # PHASE 5: SIMD BATCH SIMULATION
+                # ================================================================
                 # Simulate all n_turns tricks for all batch games in
                 # parallel using vectorized NumPy operations. This
                 # implements exact 6 Nimmt! placement rules:
@@ -482,7 +485,7 @@ class FlatMC:
                 #     cheapest row (lexicographic: score, length, index).
                 #   - If placing the 6th card: take the row's penalty,
                 #     row resets to just this card.
-                # ========================================================
+                # ================================================================
                 for t in range(n_turns):
                     played_cards = hands_array[:, :, t]
 
@@ -553,9 +556,12 @@ class FlatMC:
                             )
                             rbulls[b_nc, target_rows[nc]] += card_bulls[nc]
 
-                # ========================================================
+                # ================================================================
                 # PHASE 6: STAT AGGREGATION
-                # ========================================================
+                # ================================================================
+                # Aggregate the simulated penalties for each candidate card from
+                # the batch slices to calculate average performance.
+                # ================================================================
                 current_start = 0
                 for c in candidates:
                     sims_per_cand = budget[c]
@@ -570,22 +576,12 @@ class FlatMC:
                     
                     if self.eval_method == "avg_penalty":
                         stats_penalty[c] += np.sum(my_pens)
-                    elif self.eval_method == "win_rate":
-                        min_pens = np.min(penalties[start_b:end_b, :], axis=1)
-                        wins = np.sum(my_pens == min_pens)
-                        stats_penalty[c] -= wins  # Negative so lower is better
                     elif self.eval_method == "avg_rank":
                         ranks = np.sum(penalties[start_b:end_b, :] < my_pens[:, None], axis=1) + 1
                         stats_penalty[c] += np.sum(ranks)
-                    elif self.eval_method == "cvar":
-                        # Conditional Value at Risk: sum of worst 25% outcomes
-                        sorted_pens = np.sort(my_pens)
-                        worst_25_idx = int(0.75 * len(sorted_pens))
-                        stats_penalty[c] += np.sum(sorted_pens[worst_25_idx:])
                         
                     stats_visits[c] += sims_per_cand
 
-            # ---- Successive Halving: eliminate worst half ----
             # After each time stage, rank candidates by average penalty
             # and discard the worse-performing half. This concentrates
             # the remaining budget on the most promising candidates.
@@ -595,8 +591,10 @@ class FlatMC:
                 )
                 survivors = max(1, len(candidates) // 2)
                 if self.debug:
-                    # Clean formatting to avoid numpy object reprs in the log
-                    clean_scores = {c: round(float(stats_penalty[c] / max(1, stats_visits[c])), 2) for c in candidates}
+                    clean_scores = {
+                        c: round(float(stats_penalty[c] / max(1, stats_visits[c])), 2) 
+                        for c in candidates
+                    }
                     clean_visits = {c: int(stats_visits[c]) for c in candidates}
                     
                     print(f"[Phase 6] Stage {stage+1}/{n_stages} complete.")
@@ -609,7 +607,9 @@ class FlatMC:
 
         best_card = candidates[0]
         self.last_total_sims = sum(stats_visits.values())
+
         if self.debug:
             print(f"-> FlatMC selected card: {best_card} in {time.perf_counter() - start_time:.3f}s")
             print("="*50)
+            
         return best_card

@@ -11,8 +11,23 @@ class StudentAgent:
     Imperfect Information Distillation Agent (Student).
     Bypasses deep runtime simulation and determinization entirely.
     Directly predicts the optimal Oracle action from public state features.
+
+    Attributes:
+        player_idx (int): This agent's seat index (0-3).
+        debug (bool): Enable debug logging.
+        total_cards (set[int]): The full card universe {1, ..., 104}.
+        device (torch.device): PyTorch device for NN inference.
+        model (StudentPolicyNet): Loaded student policy network.
     """
     def __init__(self, player_idx, weights_name="student_weights.pth", debug=False):
+        """
+        Initialize the Student agent.
+
+        Args:
+            player_idx (int): The player's seat index in the game (0-3).
+            weights_name (str): Filename of the model weights to load.
+            debug (bool): Enable debug logging.
+        """
         self.player_idx = player_idx
         self.debug = debug
         self.total_cards = set(range(1, 105))
