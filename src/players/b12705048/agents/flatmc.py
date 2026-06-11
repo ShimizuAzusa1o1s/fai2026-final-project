@@ -50,13 +50,12 @@ import os
 
 from src.players.b12705048.core.constants import BULLHEAD_LOOKUP
 from src.players.b12705048.models.opp_net.model import TopologicalOpponentNet
-from src.players.b12705048.models.opp_net.feature_extractor import (
-    build_feature_vector_v1,
-    build_feature_vector_v2,
+from src.players.b12705048.core.utils import (
     get_gap_capacities,
     get_topological_gaps,
     assign_card_to_bucket
 )
+from src.players.b12705048.models.opp_net.feature_extractor import build_opp_feature_vector
 
 
 class FlatMC:
@@ -131,8 +130,6 @@ class FlatMC:
         self.input_dim = 125
         if os.path.exists(model_path):
             state_dict = torch.load(model_path, map_location=self.device, weights_only=True)
-            if 'fc1.weight' in state_dict:
-                self.input_dim = state_dict['fc1.weight'].shape[1]
             self.model = TopologicalOpponentNet(input_dim=self.input_dim).to(self.device)
             self.model.load_state_dict(state_dict)
         else:
@@ -218,16 +215,10 @@ class FlatMC:
         card_log_weights = np.full((3, 105), -1e9, dtype=np.float32)
 
         if self.use_neural_determinization:
-            # Build the feature vector dynamically based on model dimension
-            if self.input_dim == 125:
-                X = build_feature_vector_v1(
-                    history, target_round, self.player_idx,
-                    unseen_cards, len(hand)
-                )
-            else:
-                X = build_feature_vector_v2(
-                    history, target_round, self.player_idx, hand
-                )
+            X = build_opp_feature_vector(
+                history, target_round, self.player_idx,
+                unseen_cards, len(hand)
+            )
             sorted_row_ends = get_topological_gaps(board)
             capacities = get_gap_capacities(sorted_row_ends, unseen_cards)
 

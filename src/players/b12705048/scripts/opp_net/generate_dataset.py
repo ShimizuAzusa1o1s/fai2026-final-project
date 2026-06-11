@@ -8,11 +8,13 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 
 from src.engine import Engine
 from src.players.b12705048.agents.flatmc import FlatMC
-from src.players.b12705048.models.opp_net.feature_extractor import (
-    build_feature_vector,
-    build_target_matrix,
+from src.players.b12705048.core.utils import (
     get_gap_capacities,
     get_topological_gaps
+)
+from src.players.b12705048.models.opp_net.feature_extractor import (
+    build_opp_feature_vector,
+    build_target_matrix
 )
 
 # Import baseline agent
@@ -64,9 +66,9 @@ def generate_games(num_games=10, save_path=None, level=1):
         from src.players.TA.public_baselines2 import Baseline10
         
         def build_l2_cpp(idx):
-            return FlatMCCPP(player_idx=idx, time_limit=0.8, epsilon=0.2, tau=2.0, model_level=2, use_neural_determinization=True)
+            return FlatMCCPP(player_idx=idx, time_limit=0.2, epsilon=0.2, tau=1.0, model_level=2, use_neural_determinization=True)
         def build_l1_cpp(idx):
-            return FlatMCCPP(player_idx=idx, time_limit=0.8, epsilon=0.2, tau=5.0, model_level=1, use_neural_determinization=True)
+            return FlatMCCPP(player_idx=idx, time_limit=0.2, epsilon=0.2, tau=1.0, model_level=1, use_neural_determinization=True)
         def build_b10(idx):
             return Baseline10(player_idx=idx)
         def build_flatmc_base(idx):
@@ -124,7 +126,7 @@ def generate_games(num_games=10, save_path=None, level=1):
                 unseen = get_unseen_cards_at_round(total_cards, board, my_hand, history_matrix, r)
                 
                 # Input features
-                X = build_feature_vector(history_dict, r, p_idx, my_hand)
+                X = build_opp_feature_vector(history_dict, r, p_idx, unseen, len(my_hand))
                 
                 # Capacities
                 capacities = get_gap_capacities(sorted_row_ends, unseen)

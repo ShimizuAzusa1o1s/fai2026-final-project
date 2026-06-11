@@ -4,7 +4,7 @@ import torch
 import numpy as np
 
 from src.players.b12705048.models.student_net.model import StudentPolicyNet
-from src.players.b12705048.models.opp_net.feature_extractor import build_feature_vector
+from src.players.b12705048.models.student_net.feature_extractor import build_student_feature_vector
 
 class StudentAgent:
     """
@@ -45,7 +45,7 @@ class StudentAgent:
 
         # Build features
         if isinstance(history, dict):
-            X = build_feature_vector(
+            X = build_student_feature_vector(
                 history, target_round, self.player_idx, hand
             )
         else:

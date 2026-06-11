@@ -10,7 +10,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 from src.engine import Engine
 from src.players.b12705048.agents.flatmc_baseline import FlatMCBaseline
 from src.players.b12705048.agents.oracle_flatmc import OracleFlatMC
-from src.players.b12705048.models.opp_net.feature_extractor import build_feature_vector
+from src.players.b12705048.models.student_net.feature_extractor import build_student_feature_vector
 
 def get_player_hand_at_round(history_matrix, target_round, player_idx):
     hand = []
@@ -75,7 +75,7 @@ def generate_distillation_games(num_games=10, save_path=None, oracle_time=0.1):
                 my_hand = get_player_hand_at_round(history_matrix, r, p_idx)
                 
                 # Input features (334-dim V2)
-                X = build_feature_vector(history_dict, r, p_idx, my_hand)
+                X = build_student_feature_vector(history_dict, r, p_idx, my_hand)
                 
                 # True opponent hands
                 opp_hands = [get_player_hand_at_round(history_matrix, r, opp_idx) for opp_idx in range(4) if opp_idx != p_idx]

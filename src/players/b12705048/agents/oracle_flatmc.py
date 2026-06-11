@@ -146,17 +146,6 @@ class OracleFlatMC:
                     break
 
                 if HAS_CPP:
-                    # DEBUG PRINTS
-                    if self.debug:
-                        print("DEBUG ORACLE n_turns:", n_turns)
-                        print("DEBUG ORACLE opp hands length:", [len(h) for h in true_opp_hands])
-                        for opp in range(3):
-                            valid = 0
-                            for c in true_opp_hands[opp]:
-                                if c in unseen_cards:
-                                    valid += 1
-                            print(f"DEBUG ORACLE opp {opp} valid in unseen: {valid}")
-                            
                     candidates_c = np.array(candidates, dtype=np.int32)
                     budget_c = np.array([budget[c] for c in candidates], dtype=np.int32)
                     orig_tails_c = np.ascontiguousarray(orig_tails, dtype=np.int32)
