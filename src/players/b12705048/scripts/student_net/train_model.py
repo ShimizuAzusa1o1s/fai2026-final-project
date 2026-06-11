@@ -2,6 +2,7 @@ import os
 import sys
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
@@ -14,7 +15,7 @@ def train_student(dataset_path, epochs=10, batch_size=256, lr=1e-3, save_dir="."
     print(f"Loading dataset from {dataset_path}...")
     data = np.load(dataset_path)
     X = torch.tensor(data['X'], dtype=torch.float32)
-    Y = torch.tensor(data['Y'], dtype=torch.long)
+    Y = torch.tensor(data['Y'], dtype=torch.float32)
     
     dataset = TensorDataset(X, Y)
     train_size = int(0.9 * len(dataset))
@@ -27,7 +28,7 @@ def train_student(dataset_path, epochs=10, batch_size=256, lr=1e-3, save_dir="."
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = StudentPolicyNet().to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.KLDivLoss(reduction='batchmean')
     
     print(f"Training on {device}...")
     
@@ -43,13 +44,15 @@ def train_student(dataset_path, epochs=10, batch_size=256, lr=1e-3, save_dir="."
             optimizer.zero_grad()
             logits = model(batch_X)
             
-            loss = criterion(logits, batch_Y)
+            log_probs = F.log_softmax(logits, dim=1)
+            loss = criterion(log_probs, batch_Y)
             loss.backward()
             optimizer.step()
             
             train_loss += loss.item() * batch_X.size(0)
             preds = logits.argmax(dim=1)
-            train_correct += (preds == batch_Y).sum().item()
+            true_best = batch_Y.argmax(dim=1)
+            train_correct += (preds == true_best).sum().item()
             train_total += batch_X.size(0)
             
         model.eval()
@@ -62,11 +65,13 @@ def train_student(dataset_path, epochs=10, batch_size=256, lr=1e-3, save_dir="."
                 batch_X, batch_Y = batch_X.to(device), batch_Y.to(device)
                 
                 logits = model(batch_X)
-                loss = criterion(logits, batch_Y)
+                log_probs = F.log_softmax(logits, dim=1)
+                loss = criterion(log_probs, batch_Y)
                 
                 val_loss += loss.item() * batch_X.size(0)
                 preds = logits.argmax(dim=1)
-                val_correct += (preds == batch_Y).sum().item()
+                true_best = batch_Y.argmax(dim=1)
+                val_correct += (preds == true_best).sum().item()
                 val_total += batch_X.size(0)
                 
         train_loss /= train_total

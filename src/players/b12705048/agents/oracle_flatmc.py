@@ -1,3 +1,38 @@
+"""
+Flat Monte Carlo (1-Ply) Player Module — Oracle Variant.
+
+This module implements the Oracle FlatMC agent for 6 Nimmt!. Unlike the
+standard FlatMC agent, the Oracle agent has perfect information about
+opponents' hands. It bypasses opponent modeling and determinization,
+focusing purely on search and simulation.
+
+    1. Perfect Information — The agent is given the exact hands of all
+       opponents, eliminating the need for Bayesian inference and the
+       Gumbel-Max trick.
+
+    2. Heuristic Safety-Score Rollout — Each card's safety S(c) is
+       computed using a simple deterministic heuristic based on gap
+       distances, row-filling penalties, and undercut penalties.
+
+    3. Successive Halving — The simulation budget is divided into
+       ceil(log2(|hand|)) stages. After each stage, the worst-performing
+       half of candidate cards is eliminated. This is provably optimal for
+       fixed-budget pure-exploration multi-armed bandits (Karnin et al. 2013).
+
+Algorithm:
+    1. Parse board state and history; retrieve actual opponent hands.
+    2. Compute heuristic S(c) for all 104 cards.
+    3. Successive Halving loop:
+       a. Play order is determined for all turns using an ε-greedy mixture
+          of Softmax(S/τ) and a Min-Max sequence per-simulation.
+       b. Exact 6 Nimmt! simulation via vectorized SIMD batch engine.
+       c. Aggregate penalties; after each stage, halve the candidate set.
+    4. Return the card with the lowest average simulated penalty.
+
+References:
+    - Successive Halving: Karnin, Koren, Somekh (2013)
+"""
+
 import time
 import math
 import numpy as np
@@ -51,7 +86,7 @@ class OracleFlatMC:
             rollout policy (exploitation).
         tau (float): Temperature parameter for the Softmax(S/τ) rollout distribution.
             Higher τ makes choices more uniform; lower τ makes them more greedy.
-        eval_method (str): Evaluation metric for stats aggregation (win_rate/avg_penalty/avg_rank/cvar).
+        eval_method (str): Evaluation metric for stats aggregation (avg_penalty/avg_rank).
         eval_method_int (int): Integer encoding of the evaluation metric for the C++ library.
         debug (bool): Enable debug logging.
         total_cards (set[int]): The full card universe {1, ..., 104}.
@@ -59,7 +94,9 @@ class OracleFlatMC:
         bullhead_lookup (np.ndarray): O(1) bullhead penalty lookup table.
     """
 
-    def __init__(self, player_idx, epsilon=0.2, tau=1.0, time_limit=0.9, eval_method="win_rate", debug=False):
+    def __init__(
+        self, player_idx, epsilon=0.2, tau=1.0, time_limit=0.9, 
+        eval_method="avg_rank", debug=False):
         """
         Initialize the Oracle Flat Monte Carlo player.
 
@@ -72,7 +109,7 @@ class OracleFlatMC:
             tau: Temperature parameter for the Softmax(S/τ) rollout distribution. Controls
                 how strongly the safety score biases card selection.
             time_limit: Simulation budget in seconds.
-            eval_method: Evaluation metric for stats aggregation (win_rate/avg_penalty/avg_rank/cvar).
+            eval_method: Evaluation metric for stats aggregation (avg_penalty/avg_rank).
             debug: Enable debug logging.
         """
         self.player_idx = player_idx
@@ -80,7 +117,7 @@ class OracleFlatMC:
         self.epsilon = epsilon
         self.tau = tau
         self.eval_method = eval_method
-        self.eval_method_int = {"avg_penalty": 0, "win_rate": 1, "avg_rank": 2, "cvar": 3}.get(eval_method, 0)
+        self.eval_method_int = {"avg_penalty": 0, "avg_rank": 2}.get(eval_method, 0)
         self.debug = debug
         self.total_cards = set(range(1, 105))
         self.batch_size = 5000 
@@ -92,21 +129,20 @@ class OracleFlatMC:
         if true_opp_hands is None:
             raise ValueError("OracleFlatMC requires true_opp_hands to be provided.")
 
-        if isinstance(history, dict):
-            board = history.get('board', [])
-        else:
-            board = history[-1]
+        # ================================================================
+        # PHASE 1: STATE PARSING
+        # ================================================================
+        board = history.get('board', [])
 
         visible_cards = set()
         for row in board:
             visible_cards.update(row)
 
-        if isinstance(history, dict):
-            for past_round in history.get('history_matrix', []):
-                visible_cards.update(past_round)
-            if history.get('board_history'):
-                for row in history['board_history'][0]:
-                    visible_cards.update(row)
+        for past_round in history.get('history_matrix', []):
+            visible_cards.update(past_round)
+        if history.get('board_history'):
+            for row in history['board_history'][0]:
+                visible_cards.update(row)
 
         unseen_cards = list(self.total_cards - visible_cards - set(hand))
         n_turns = len(hand)
@@ -146,13 +182,10 @@ class OracleFlatMC:
         target_rbulls = orig_rbulls[target_rows]
 
         S = np.zeros(105, dtype=np.float32)
-
         cond1 = (~is_invalid) & (target_lengths < 5)
         S[cond1] = -min_deltas[cond1]
-
         cond2 = (~is_invalid) & (target_lengths == 5)
         S[cond2] = -(10.0 * target_rbulls[cond2])
-
         min_bulls = np.min(orig_rbulls) if len(orig_rbulls) > 0 else 0
         S[is_invalid] = -(5.0 * min_bulls)
 
@@ -219,9 +252,4 @@ class OracleFlatMC:
                 candidates = candidates[:survivors]
 
         best_card = candidates[0]
-        
-        # In distillation, we might want the full policy distribution instead of just the top card.
-        # But for now we just return the best card, which is the Teacher's hard target.
-        # Alternatively, we can return the Softmax distribution over all cards proportional to their stats.
-        # Returning a tuple: (best_card, stats_penalty, stats_visits) is better for distillation targets.
         return best_card, stats_penalty, stats_visits

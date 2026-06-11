@@ -1,3 +1,32 @@
+"""
+Imperfect Information Distillation Player Module — Student Variant.
+
+This module implements the Student agent for 6 Nimmt!. It bypasses
+deep runtime simulation and determinization entirely. Instead, it uses a
+trained neural network (StudentPolicyNet) to directly predict the optimal
+action that an Oracle would take, based solely on public state features.
+
+    1. Imperfect Information Distillation — The agent learns to mimic the
+       strong Oracle agent without needing access to hidden opponent hands.
+    2. Zero-Search Inference — Action selection requires only a single
+       forward pass through the neural network, making the agent extremely
+       fast at inference time.
+    3. Feature Extraction — The agent extracts a comprehensive set of
+       features from the public board state, including board configuration,
+       the agent's own hand, and played card history.
+
+Algorithm:
+    1. Parse board state, personal hand, and history.
+    2. Construct the student feature vector using `build_student_feature_vector`.
+    3. Run a forward pass through the `StudentPolicyNet`.
+    4. Apply a mask to the network logits to invalidate illegal moves (cards
+       not in hand).
+    5. Return the legal card with the highest predicted probability.
+
+References:
+    - Policy Distillation: Rusu et al. (2015)
+"""
+
 import os
 import time
 import torch
@@ -33,7 +62,8 @@ class StudentAgent:
         self.total_cards = set(range(1, 105))
         
         self.device = torch.device('cpu')
-        self.model = StudentPolicyNet(obs_dim=334, action_dim=105, hidden_dim=256).to(self.device)
+        self.input_dim = 334
+        self.model = StudentPolicyNet(obs_dim=334, action_dim=105).to(self.device)
         
         current_dir = os.path.dirname(os.path.abspath(__file__))
         parent_dir = os.path.dirname(current_dir)

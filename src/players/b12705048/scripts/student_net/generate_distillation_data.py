@@ -58,7 +58,7 @@ def generate_distillation_games(num_games=10, save_path=None, oracle_time=0.1):
     
     X_list = []  # Public features
     H_list = []  # One-hot hand mask
-    Y_list = []  # Oracle target action (best card)
+    Y_list = []  # Oracle target probabilities
     
     total_cards = set(range(1, 105))
     
@@ -96,13 +96,29 @@ def generate_distillation_games(num_games=10, save_path=None, oracle_time=0.1):
                 
                 # Ask Oracle for the true optimal move
                 oracle = OracleFlatMC(player_idx=p_idx, time_limit=oracle_time, debug=False)
-                best_card, _, _ = oracle.action(my_hand, history_dict, true_opp_hands=opp_hands)
+                best_card, stats_penalty, stats_visits = oracle.action(my_hand, history_dict, true_opp_hands=opp_hands)
+                
+                target_probs = np.zeros(105, dtype=np.float32)
+                scores = {}
+                for c in my_hand:
+                    if stats_visits[c] > 0:
+                        scores[c] = - (stats_penalty[c] / stats_visits[c])
+                    else:
+                        scores[c] = -10.0
+                
+                tau = 0.1
+                max_score = max(scores.values())
+                exp_scores = {c: np.exp((scores[c] - max_score) / tau) for c in my_hand}
+                sum_exp = sum(exp_scores.values())
+                
+                for c in my_hand:
+                    target_probs[c] = exp_scores[c] / sum_exp
                 
                 X_list.append(X)
-                Y_list.append(best_card)
+                Y_list.append(target_probs)
                 
     X_arr = np.array(X_list, dtype=np.float32)
-    Y_arr = np.array(Y_list, dtype=np.int64)
+    Y_arr = np.array(Y_list, dtype=np.float32)
     
     print(f"\nGenerated {len(X_arr)} state-action pairs.")
     print(f"X shape: {X_arr.shape}")

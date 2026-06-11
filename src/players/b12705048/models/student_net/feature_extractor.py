@@ -30,9 +30,9 @@ def build_student_feature_vector(history, target_round, player_idx, my_hand):
     # ---------------------------------------------
     # Sort the 4 rows by their tail value in ascending order
     sorted_board = sorted(board, key=lambda row: row[-1])
-    row_ends = [row[-1] for row in sorted_board]
-    lengths = [len(row) for row in sorted_board]
-    bullheads = [sum(BULLHEAD_LOOKUP[c] for c in row) for row in sorted_board]
+    row_ends = [row[-1] / 104.0 for row in sorted_board]
+    lengths = [len(row) / 5.0 for row in sorted_board]
+    bullheads = [sum(BULLHEAD_LOOKUP[c] for c in row) / 25.0 for row in sorted_board]
     
     board_features = np.array(row_ends + lengths + bullheads, dtype=np.float32)
 
