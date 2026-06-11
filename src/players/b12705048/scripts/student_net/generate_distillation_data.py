@@ -33,8 +33,21 @@ def generate_distillation_games(num_games=10, save_path=None, oracle_time=0.1):
         
     print(f"Generating {num_games} games. Oracle time limit: {oracle_time}s per decision.")
     
-    # We generate games using baseline agents to get a diverse set of states
-    players_pool = [FlatMCBaseline(player_idx=i, time_limit=0.01) for i in range(4)]
+    import random
+    from src.players.b12705048.agents.flatmc_cpp import FlatMCCPP
+    from src.players.TA.public_baselines2 import Baseline10
+    
+    def build_l2_cpp(idx):
+        return FlatMCCPP(player_idx=idx, time_limit=0.2, epsilon=0.2, tau=1.0, model_level=2, use_neural_determinization=True)
+    def build_l1_cpp(idx):
+        return FlatMCCPP(player_idx=idx, time_limit=0.2, epsilon=0.2, tau=1.0, model_level=1, use_neural_determinization=True)
+    def build_b10(idx):
+        return Baseline10(player_idx=idx)
+    def build_flatmc_base(idx):
+        return FlatMCBaseline(player_idx=idx, time_limit=0.1)
+        
+    builders = [build_l2_cpp, build_l1_cpp, build_b10, build_flatmc_base]
+    weights = [0.4, 0.3, 0.2, 0.1]
     
     cfg = {
         "n_players": 4,
@@ -52,7 +65,8 @@ def generate_distillation_games(num_games=10, save_path=None, oracle_time=0.1):
     for game_id in tqdm(range(num_games)):
         players = []
         for i in range(4):
-            players.append(players_pool[i])
+            builder = random.choices(builders, weights=weights, k=1)[0]
+            players.append(builder(i))
                 
         engine = Engine(cfg, players)
         scores, history = engine.play_game()
