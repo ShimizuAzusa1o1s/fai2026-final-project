@@ -2,6 +2,12 @@
     "baselines": [
         [
             "src.players.TA.public_baselines2",
+            "Baseline9",
+            {},
+            "B9"
+        ],
+        [
+            "src.players.TA.public_baselines2",
             "Baseline10",
             {},
             "B10"
@@ -12,7 +18,8 @@
             "src.players.b12705048.agents.flatmc_cpp",
             "FlatMCCPP",
             {
-                "time_limit": 0.2
+                "time_limit": 0.2,
+                "model_level": 3
             },
             "FlatMC-L3-CPP"
         ],
@@ -23,12 +30,6 @@
                 "time_limit": 0.1
             },
             "FlatMC-Base"
-        ],
-        [
-            "src.players.b12705048.agents.student",
-            "StudentAgent",
-            {},
-            "Student"
         ]
     ],
     "engine": {

@@ -17,7 +17,8 @@ def evaluate_accuracy(dataset_path="data/dataset_l3.npz", weights_path="src/play
 
     print(f"Loading dataset from {dataset_path}...")
     data = np.load(dataset_path)
-    X = torch.tensor(data['X'], dtype=torch.float32)
+    X_np = data['X']
+    X = torch.tensor(X_np, dtype=torch.float32)
     Y = torch.tensor(data['Y'], dtype=torch.float32)
     C = torch.tensor(data['C'], dtype=torch.float32)
     

@@ -3,11 +3,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class TopologicalOpponentNet(nn.Module):
-    def __init__(self, input_dim=334, hidden_dim1=256, hidden_dim2=128):
+    def __init__(self, input_dim=125, hidden_dim1=256, hidden_dim2=128):
         super(TopologicalOpponentNet, self).__init__()
         
+        # Simple, shallow architecture without Dropout or BatchNorm
+        # This forces the network to learn robust logical heuristics rather than overfitting noise
         self.fc1 = nn.Linear(input_dim, hidden_dim1)
         self.fc2 = nn.Linear(hidden_dim1, hidden_dim2)
+        
         # Outputs 15 logits (3 opponents * 5 topological buckets)
         self.fc3 = nn.Linear(hidden_dim2, 15)
         
@@ -37,11 +40,22 @@ class TopologicalOpponentNet(nn.Module):
         
         return probs
 
-def compute_kl_loss(pred_probs, target_probs, gap_capacities=None):
+def compute_kl_loss(pred_probs, target_probs, gap_capacities=None, smoothing=0.0):
     """
     Computes KL Divergence loss, with optional masking to prevent penalizing the network
     for buckets that are physically impossible in the current board state.
+    Uses label smoothing to prevent overconfidence and increase robustness.
     """
+    if smoothing > 0.0:
+        # Smooth the target distributions over the VALID buckets only.
+        if gap_capacities is not None:
+            valid_mask = (gap_capacities > 0).unsqueeze(1).expand(-1, 3, -1).float()
+            num_valid = valid_mask.sum(dim=2, keepdim=True)
+            num_valid = torch.clamp(num_valid, min=1.0)
+            target_probs = target_probs * (1.0 - smoothing) + (smoothing / num_valid) * valid_mask
+        else:
+            target_probs = target_probs * (1.0 - smoothing) + (smoothing / 5.0)
+
     # PyTorch KLDivLoss expects input in log-space
     log_probs = torch.log(pred_probs + 1e-10)
     

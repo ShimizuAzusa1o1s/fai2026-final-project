@@ -35,10 +35,6 @@ Algorithm:
 References:
     - Gumbel-Max trick: Yellott (1977), Kool et al. (2019)
     - Successive Halving: Karnin, Koren, Somekh (2013)
-
-See Also:
-    - flatmc_baseline.py — Uniform-random rollout baseline.
-    - flatmc_cpp.py — C++ image implementation for rapid test.
 """
 
 import time
@@ -92,7 +88,7 @@ class FlatMC:
     """
 
     def __init__(
-        self, player_idx, epsilon=0.2, tau=1.0, time_limit=0.9, model_level=3, 
+        self, player_idx, epsilon=0.2, tau=1.0, time_limit=0.9, model_level="best", 
         use_neural_determinization=True, eval_method="avg_rank"):
         """
         Initialize the Neural Determinization Monte Carlo player.
@@ -106,7 +102,7 @@ class FlatMC:
             tau: Temperature parameter for the Softmax(S/τ) rollout distribution. Controls
                 how strongly the safety score biases card selection.
             time_limit: Simulation budget in seconds.
-            model_level: Which level of weights to load.
+            model_level: Which level of weights to load ("best" or integer).
             use_neural_determinization: Whether to use TopologicalOpponentNet.
             eval_method: Evaluation metric for stats aggregation (avg_penalty/avg_rank).
         """
@@ -128,7 +124,10 @@ class FlatMC:
         # Resolve path to weights (agents/ -> models/)
         current_dir = os.path.dirname(os.path.abspath(__file__))
         parent_dir = os.path.dirname(current_dir)
-        model_path = os.path.join(parent_dir, "models", "opp_net", f"weights_l{self.model_level}.pth")
+        if self.model_level == "best":
+            model_path = os.path.join(parent_dir, "models", "opp_net", "best_model.pth")
+        else:
+            model_path = os.path.join(parent_dir, "models", "opp_net", f"weights_l{self.model_level}.pth")
 
         self.input_dim = 125
         self.model = TopologicalOpponentNet(input_dim=self.input_dim).to(self.device)

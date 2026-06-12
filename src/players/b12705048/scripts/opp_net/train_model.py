@@ -18,7 +18,9 @@ def train_model(dataset_path=None, epochs=50, batch_size=256, lr=1e-3, level=1):
 
     print("Loading dataset...")
     data = np.load(dataset_path)
-    X = torch.tensor(data['X'], dtype=torch.float32)
+    X_np = data['X']
+    
+    X = torch.tensor(X_np, dtype=torch.float32)
     Y = torch.tensor(data['Y'], dtype=torch.float32)
     C = torch.tensor(data['C'], dtype=torch.float32)
     
@@ -57,7 +59,7 @@ def train_model(dataset_path=None, epochs=50, batch_size=256, lr=1e-3, level=1):
             optimizer.zero_grad()
             
             probs = model(batch_x, gap_capacities=batch_c)
-            loss = compute_kl_loss(probs, batch_y, gap_capacities=batch_c)
+            loss = compute_kl_loss(probs, batch_y, gap_capacities=batch_c, smoothing=0.05)
             
             loss.backward()
             optimizer.step()

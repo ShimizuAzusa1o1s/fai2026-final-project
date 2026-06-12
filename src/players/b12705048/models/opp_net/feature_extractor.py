@@ -8,9 +8,9 @@ def build_opp_feature_vector(history, target_round, player_idx, unseen_cards, cu
     125-dim feature extractor for Opponent Network.
     """
     board = history['board_history'][target_round]
-    row_ends = [row[-1] for row in board]
-    lengths = [len(row) for row in board]
-    bullheads = [sum(BULLHEAD_LOOKUP[c] for c in row) for row in board]
+    row_ends = [float(row[-1]) for row in board]
+    lengths = [float(len(row)) for row in board]
+    bullheads = [float(sum(BULLHEAD_LOOKUP[c] for c in row)) for row in board]
     board_features = row_ends + lengths + bullheads 
     
     card_mask = np.zeros(104, dtype=np.float32)
@@ -31,8 +31,8 @@ def build_opp_feature_vector(history, target_round, player_idx, unseen_cards, cu
     
     for opp_idx in opp_indices:
         opp_features.extend([
-            current_hand_size,
-            current_scores[opp_idx],
+            float(current_hand_size),
+            float(current_scores[opp_idx]),
             float(prev_penalties[opp_idx])
         ])
         
