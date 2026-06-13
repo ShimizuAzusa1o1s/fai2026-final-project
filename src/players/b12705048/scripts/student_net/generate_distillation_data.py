@@ -38,9 +38,9 @@ def generate_distillation_games(num_games=10, save_path=None, oracle_time=0.1):
     from src.players.TA.public_baselines2 import Baseline10
     
     def build_l2_cpp(idx):
-        return FlatMCCPP(player_idx=idx, time_limit=0.2, epsilon=0.2, tau=1.0, model_level=2, use_neural_determinization=True)
+        return FlatMCCPP(player_idx=idx, time_limit=0.1, epsilon=0.2, tau=1.0, model_level=2, use_neural_determinization=True)
     def build_l1_cpp(idx):
-        return FlatMCCPP(player_idx=idx, time_limit=0.2, epsilon=0.2, tau=1.0, model_level=1, use_neural_determinization=True)
+        return FlatMCCPP(player_idx=idx, time_limit=0.1, epsilon=0.2, tau=1.0, model_level=1, use_neural_determinization=True)
     def build_b10(idx):
         return Baseline10(player_idx=idx)
     def build_flatmc_base(idx):

@@ -11,7 +11,7 @@
             "epsilon": 0.2,
             "tau": 1.0,
             "time_limit": 0.9,
-            "model_level": 3,
+            "model_level": "best",
             "use_neural_determinization": "True",
             "eval_method": "avg_rank"
         }
